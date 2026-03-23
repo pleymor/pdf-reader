@@ -18,7 +18,8 @@ type AnnotationCreatedHandler      = (ann: Annotation) => void;
 type AnnotationMovedHandler        = (ann: Annotation) => void;
 type AnnotationRemovedHandler      = (ann: Annotation) => void;
 type AnnotationReorderHandler      = (ann: Annotation, dir: "front" | "back") => void;
-type TextAnnotationSelectedHandler = (ann: TextAnnotation | null) => void;
+type TextAnnotationSelectedHandler  = (ann: TextAnnotation | null) => void;
+type AnnotationStyleChangedHandler  = (ann: Annotation) => void;
 type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 const HANDLE_R = 4; // half-size of handle squares in px
@@ -68,7 +69,8 @@ export class CanvasOverlay {
   private movedHandlers:        AnnotationMovedHandler[]        = [];
   private removedHandlers:      AnnotationRemovedHandler[]      = [];
   private reorderHandlers:      AnnotationReorderHandler[]      = [];
-  private textSelectedHandlers: TextAnnotationSelectedHandler[] = [];
+  private textSelectedHandlers:   TextAnnotationSelectedHandler[]  = [];
+  private styleChangedHandlers:   AnnotationStyleChangedHandler[]  = [];
 
   private committed: Annotation[] = [];
   /** Annotations already burned into the PDF content stream — rendered by
@@ -97,7 +99,8 @@ export class CanvasOverlay {
   onAnnotationMoved      (h: AnnotationMovedHandler):        void { this.movedHandlers.push(h); }
   onAnnotationRemoved    (h: AnnotationRemovedHandler):      void { this.removedHandlers.push(h); }
   onAnnotationReordered  (h: AnnotationReorderHandler):      void { this.reorderHandlers.push(h); }
-  onTextAnnotationSelected(h: TextAnnotationSelectedHandler):void { this.textSelectedHandlers.push(h); }
+  onTextAnnotationSelected (h: TextAnnotationSelectedHandler): void { this.textSelectedHandlers.push(h); }
+  onAnnotationStyleChanged (h: AnnotationStyleChangedHandler): void { this.styleChangedHandlers.push(h); }
 
   /** Mark these annotations as already burned into the PDF content stream.
    *  The overlay will skip rendering them to avoid visual doubling — they are
@@ -123,9 +126,8 @@ export class CanvasOverlay {
   private emitReordered    (a: Annotation, dir: "front" | "back"): void {
     this.reorderHandlers.forEach(h => h(a, dir));
   }
-  private emitTextSelected (a: TextAnnotation | null): void {
-    this.textSelectedHandlers.forEach(h => h(a));
-  }
+  private emitTextSelected   (a: TextAnnotation | null): void { this.textSelectedHandlers.forEach(h => h(a)); }
+  private emitStyleChanged   (a: Annotation):            void { this.styleChangedHandlers.forEach(h => h(a)); }
 
   get currentTool(): ToolKind { return this.activeTool; }
 
@@ -858,6 +860,7 @@ export class CanvasOverlay {
       if (!isNaN(sw) && sw > 0) ann.strokeWidth = sw;
       this.redrawCommitted();
       this.emitMoved(ann);
+      this.emitStyleChanged(ann);
     };
     colorInput.addEventListener("input", apply);
     strokeInput.addEventListener("change", apply);

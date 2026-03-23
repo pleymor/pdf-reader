@@ -239,11 +239,11 @@ toolbar.on(async (e) => {
       break;
 
     case "style-change":
+      Object.assign(toolState, e.style); // always persist for next annotation
       if (editingTextAnn) {
         overlay.applyTextAnnotationStyle(editingTextAnn, e.style);
         setDirty(true);
       } else {
-        Object.assign(toolState, e.style);
         overlay.setStyle(toolState);
       }
       break;
@@ -285,6 +285,14 @@ overlay.onAnnotationReordered((ann: Annotation, dir) => {
   if (dir === "front") store.bringToFront(ann);
   else store.sendToBack(ann);
   setDirty(true);
+});
+
+overlay.onAnnotationStyleChanged((ann: Annotation) => {
+  if (ann.kind === "rect" || ann.kind === "circle") {
+    toolState.color = { ...ann.color };
+    toolState.strokeWidth = ann.strokeWidth;
+    overlay.setStyle(toolState);
+  }
 });
 
 overlay.onTextAnnotationSelected((ann: TextAnnotation | null) => {
