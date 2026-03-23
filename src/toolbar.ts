@@ -30,6 +30,7 @@ export class Toolbar {
   private el: HTMLElement;
   private pageInput!: HTMLInputElement;
   private pageTotal!: HTMLSpanElement;
+  private pageNavSection!: HTMLElement;
   private toolBtns: Partial<Record<ToolKind, HTMLButtonElement>> = {};
 
   // Text style section
@@ -62,6 +63,9 @@ export class Toolbar {
   updatePageInfo(current: number, total: number): void {
     if (this.pageInput) this.pageInput.value = String(current);
     if (this.pageTotal) this.pageTotal.textContent = `/ ${total}`;
+    if (this.pageNavSection) {
+      this.pageNavSection.style.display = total >= 2 ? "flex" : "none";
+    }
   }
 
   getStyle(): ActiveToolState {
@@ -147,7 +151,11 @@ export class Toolbar {
     const navWrapper = document.createElement("div");
     navWrapper.className = "page-nav";
     navWrapper.append(prevBtn, this.pageInput, this.pageTotal, nextBtn);
-    this.el.append(navWrapper, this.sep());
+
+    this.pageNavSection = document.createElement("div");
+    this.pageNavSection.style.cssText = "display:none;align-items:center;gap:4px;";
+    this.pageNavSection.append(navWrapper, this.sep());
+    this.el.append(this.pageNavSection);
 
     // Zoom
     const zoomOut = this.btn("−", "Zoom out", "icon-btn");
