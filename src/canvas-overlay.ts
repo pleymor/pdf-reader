@@ -379,6 +379,7 @@ export class CanvasOverlay {
     }
 
     if (this.activeTool === "text") {
+      e.preventDefault(); // prevent canvas click from stealing focus away from the input
       this.handleTextClick(e.offsetX, e.offsetY);
       return;
     }
@@ -505,6 +506,68 @@ export class CanvasOverlay {
     }
   };
 
+  // ── Text placement ───────────────────────────────────────────────────────────
+
+  private handleTextClick(canvasX: number, canvasY: number): void {
+    const container = document.getElementById("viewer-container")!;
+
+    const input = document.createElement("div");
+    input.contentEditable = "true";
+    input.style.cssText = `
+      position: absolute;
+      left: ${canvasX}px; top: ${canvasY - this.style.fontSize * this.scale}px;
+      min-width: 80px; max-width: ${this.canvas.width - canvasX}px;
+      font-size: ${this.style.fontSize * this.scale}px; font-family: Helvetica, Arial, sans-serif;
+      font-weight: ${this.style.bold ? "bold" : "normal"};
+      font-style: ${this.style.italic ? "italic" : "normal"};
+      text-decoration: ${this.style.underline ? "underline" : "none"};
+      color: ${rgbToCss(this.style.color)};
+      outline: 1px dashed #aaa; background: rgba(0,0,0,0.1);
+      padding: 1px 4px; white-space: pre; z-index: 20;
+    `;
+
+    const commit = (): void => {
+      if (!input.isConnected) return;
+      const content = input.textContent?.trim() ?? "";
+      input.remove();
+      document.removeEventListener("mousedown", outsideClick, true);
+      if (content) {
+        const approxWidth = content.length * this.style.fontSize * 0.55 + 10;
+        const pdfCoords = canvasToPdf(canvasX, canvasY, this.scale, this.pageHeightPt);
+        const ann: TextAnnotation = {
+          kind: "text", page: this.currentPage,
+          x: pdfCoords.x, y: pdfCoords.y,
+          width: approxWidth,
+          content,
+          color: { ...this.style.color },
+          fontSize: this.style.fontSize,
+          bold: this.style.bold, italic: this.style.italic, underline: this.style.underline,
+          alignment: this.style.alignment,
+        };
+        this.committed.push(ann);
+        this.redrawCommitted();
+        this.emit(ann);
+      }
+    };
+
+    const outsideClick = (ev: MouseEvent): void => {
+      if (!input.contains(ev.target as Node)) commit();
+    };
+
+    input.addEventListener("keydown", (ev: KeyboardEvent) => {
+      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); commit(); }
+      else if (ev.key === "Escape") {
+        input.remove();
+        document.removeEventListener("mousedown", outsideClick, true);
+      }
+    });
+
+    container.appendChild(input);
+    input.focus();
+    // Defer listener so it doesn't fire on the same mousedown that created this input
+    setTimeout(() => document.addEventListener("mousedown", outsideClick, true), 0);
+  }
+
   // ── Double-click edit ─────────────────────────────────────────────────────────
 
   private onDblClick = (e: MouseEvent): void => {
@@ -537,8 +600,10 @@ export class CanvasOverlay {
       padding: 1px 2px; white-space: pre; z-index: 10;
     `;
     const commit = (): void => {
+      if (!input.isConnected) return;
       const content = input.textContent?.trim() ?? "";
       input.remove();
+      document.removeEventListener("mousedown", outsideClick, true);
       if (content && content !== ann.content) {
         ann.content = content;
         ann.width   = content.length * ann.fontSize * 0.55 + 10;
@@ -546,17 +611,20 @@ export class CanvasOverlay {
       }
       this.redrawCommitted();
     };
+    const outsideClick = (ev: MouseEvent): void => {
+      if (!input.contains(ev.target as Node)) commit();
+    };
     input.addEventListener("keydown", (ev: KeyboardEvent) => {
       if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); commit(); }
-      else if (ev.key === "Escape")            { input.remove(); this.redrawCommitted(); }
+      else if (ev.key === "Escape") { input.remove(); document.removeEventListener("mousedown", outsideClick, true); this.redrawCommitted(); }
     });
-    input.addEventListener("blur", commit, { once: true });
     container.appendChild(input);
     input.focus();
     const range = document.createRange();
     range.selectNodeContents(input);
     window.getSelection()?.removeAllRanges();
     window.getSelection()?.addRange(range);
+    setTimeout(() => document.addEventListener("mousedown", outsideClick, true), 0);
   }
 
   private handleShapeEdit(ann: RectAnnotation | CircleAnnotation, cx: number, cy: number): void {
