@@ -98,7 +98,7 @@ export interface ActiveToolState {
 export function defaultToolState(): ActiveToolState {
   return {
     tool: "select",
-    color: { r: 220, g: 50, b: 50 },
+    color: { r: 0, g: 0, b: 0 },
     fontSize: 14,
     bold: false,
     italic: false,
