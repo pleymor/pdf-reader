@@ -18,7 +18,7 @@ type ToolbarEvent =
   | { type: "page-goto"; page: number }
   | { type: "tool-change"; tool: ToolKind }
   | { type: "style-change"; style: ActiveToolState }
-  | { type: "text-layer"; dir: "front" | "back" }
+  | { type: "layer-change"; dir: "front" | "back" }
   | { type: "signature" };
 
 type EventHandler = (e: ToolbarEvent) => void;
@@ -40,6 +40,11 @@ export class Toolbar {
   private italicBtn!: HTMLButtonElement;
   private underlineBtn!: HTMLButtonElement;
   private alignBtns: HTMLButtonElement[] = [];
+
+  // Shape style section
+  private shapeStyleSection!: HTMLElement;
+  private shapeColorPicker!: HTMLInputElement;
+  private shapeStrokeInput!: HTMLInputElement;
 
   constructor() {
     this.el = document.getElementById("toolbar-container")!;
@@ -83,6 +88,20 @@ export class Toolbar {
 
   hideTextStyles(): void {
     this.textStyleSection.style.display = "none";
+  }
+
+  showShapeStyles(state: Pick<ActiveToolState, "color" | "strokeWidth">): void {
+    this.state.color       = { ...state.color };
+    this.state.strokeWidth = state.strokeWidth;
+
+    this.shapeColorPicker.value = rgbToHex(state.color);
+    this.shapeStrokeInput.value = String(state.strokeWidth);
+
+    this.shapeStyleSection.style.display = "flex";
+  }
+
+  hideShapeStyles(): void {
+    this.shapeStyleSection.style.display = "none";
   }
 
   private sep(): HTMLElement {
@@ -158,8 +177,9 @@ export class Toolbar {
       this.el.append(b);
     }
 
-    // Text style section (hidden until text tool or text annotation selected)
+    // Contextual style sections (hidden by default)
     this.buildTextStyleSection();
+    this.buildShapeStyleSection();
 
     this.el.append(this.sep());
 
@@ -211,8 +231,8 @@ export class Toolbar {
     this.boldBtn      = this.btn("B", "Bold",      "icon-btn");
     this.italicBtn    = this.btn("I", "Italic",    "icon-btn");
     this.underlineBtn = this.btn("U", "Underline", "icon-btn");
-    this.boldBtn.style.fontWeight       = "700";
-    this.italicBtn.style.fontStyle      = "italic";
+    this.boldBtn.style.fontWeight          = "700";
+    this.italicBtn.style.fontStyle         = "italic";
     this.underlineBtn.style.textDecoration = "underline";
 
     ([
@@ -251,11 +271,58 @@ export class Toolbar {
     // Layer order
     const frontBtn = this.btn("↑", "Bring to front", "icon-btn");
     const backBtn  = this.btn("↓", "Send to back",   "icon-btn");
-    frontBtn.addEventListener("click", () => this.emit({ type: "text-layer", dir: "front" }));
-    backBtn.addEventListener ("click", () => this.emit({ type: "text-layer", dir: "back"  }));
+    frontBtn.addEventListener("click", () => this.emit({ type: "layer-change", dir: "front" }));
+    backBtn.addEventListener ("click", () => this.emit({ type: "layer-change", dir: "back"  }));
     this.textStyleSection.append(frontBtn, backBtn);
 
     this.el.append(this.textStyleSection);
+  }
+
+  private buildShapeStyleSection(): void {
+    this.shapeStyleSection = document.createElement("div");
+    this.shapeStyleSection.style.cssText = "display:none;align-items:center;gap:4px;";
+
+    this.shapeStyleSection.append(this.sep());
+
+    // Stroke colour
+    this.shapeColorPicker = document.createElement("input");
+    this.shapeColorPicker.type = "color";
+    this.shapeColorPicker.className = "color-picker";
+    this.shapeColorPicker.title = "Stroke colour";
+    this.shapeColorPicker.value = rgbToHex(this.state.color);
+    this.shapeColorPicker.addEventListener("input", () => {
+      this.state.color = hexToRgb(this.shapeColorPicker.value);
+      this.emitStyleChange();
+    });
+    this.shapeStyleSection.append(this.shapeColorPicker);
+
+    // Stroke width
+    const strokeLabel = document.createElement("span");
+    strokeLabel.textContent = "w:";
+    strokeLabel.style.cssText = "color:#aaa;font-size:11px;";
+
+    this.shapeStrokeInput = document.createElement("input");
+    this.shapeStrokeInput.type = "number";
+    this.shapeStrokeInput.className = "toolbar-input";
+    this.shapeStrokeInput.title = "Stroke width";
+    this.shapeStrokeInput.value = String(this.state.strokeWidth);
+    this.shapeStrokeInput.min = "0.5";
+    this.shapeStrokeInput.max = "20";
+    this.shapeStrokeInput.step = "0.5";
+    this.shapeStrokeInput.addEventListener("change", () => {
+      const sw = parseFloat(this.shapeStrokeInput.value);
+      if (!isNaN(sw) && sw > 0) { this.state.strokeWidth = sw; this.emitStyleChange(); }
+    });
+    this.shapeStyleSection.append(strokeLabel, this.shapeStrokeInput);
+
+    // Layer order
+    const frontBtn = this.btn("↑", "Bring to front", "icon-btn");
+    const backBtn  = this.btn("↓", "Send to back",   "icon-btn");
+    frontBtn.addEventListener("click", () => this.emit({ type: "layer-change", dir: "front" }));
+    backBtn.addEventListener ("click", () => this.emit({ type: "layer-change", dir: "back"  }));
+    this.shapeStyleSection.append(frontBtn, backBtn);
+
+    this.el.append(this.shapeStyleSection);
   }
 
   private emitStyleChange(): void {

@@ -6,6 +6,8 @@ import { AnnotationStore } from "./annotation-store";
 import {
   defaultToolState,
   type Annotation,
+  type CircleAnnotation,
+  type RectAnnotation,
   type TextAnnotation,
 } from "./models";
 import {
@@ -23,7 +25,8 @@ let filePath: string | null = null;
 let outputPath: string | null = null;
 let isDirty = false;
 let pendingSignature: string | null = null; // base64 PNG while in placing mode
-let editingTextAnn:  TextAnnotation | null = null; // text annotation whose style is bound to toolbar
+let editingTextAnn:  TextAnnotation | null = null;
+let editingShapeAnn: RectAnnotation | CircleAnnotation | null = null;
 
 // ── Instances ─────────────────────────────────────────────────────────────────
 
@@ -229,12 +232,17 @@ toolbar.on(async (e) => {
 
     case "tool-change":
       overlay.setTool(e.tool);
+      editingTextAnn  = null;
+      editingShapeAnn = null;
       if (e.tool === "text") {
-        editingTextAnn = null;
         toolbar.showTextStyles(toolState);
-      } else {
-        editingTextAnn = null;
+        toolbar.hideShapeStyles();
+      } else if (e.tool === "rect" || e.tool === "circle") {
+        toolbar.showShapeStyles(toolState);
         toolbar.hideTextStyles();
+      } else {
+        toolbar.hideTextStyles();
+        toolbar.hideShapeStyles();
       }
       break;
 
@@ -244,17 +252,22 @@ toolbar.on(async (e) => {
       if (editingTextAnn) {
         overlay.applyTextAnnotationStyle(editingTextAnn, e.style);
         setDirty(true);
-      }
-      break;
-
-    case "text-layer":
-      if (editingTextAnn) {
-        if (e.dir === "front") store.bringToFront(editingTextAnn);
-        else store.sendToBack(editingTextAnn);
-        overlay.reorderTextAnnotation(editingTextAnn, e.dir);
+      } else if (editingShapeAnn) {
+        overlay.applyShapeAnnotationStyle(editingShapeAnn, e.style.color, e.style.strokeWidth);
         setDirty(true);
       }
       break;
+
+    case "layer-change": {
+      const ann = editingTextAnn ?? editingShapeAnn;
+      if (ann) {
+        if (e.dir === "front") store.bringToFront(ann);
+        else store.sendToBack(ann);
+        overlay.reorderTextAnnotation(ann, e.dir);
+        setDirty(true);
+      }
+      break;
+    }
 
     case "signature":
       sigModal.open();
@@ -286,20 +299,25 @@ overlay.onAnnotationReordered((ann: Annotation, dir) => {
   setDirty(true);
 });
 
-overlay.onAnnotationStyleChanged((ann: Annotation) => {
-  if (ann.kind === "rect" || ann.kind === "circle") {
-    toolState.color = { ...ann.color };
-    toolState.strokeWidth = ann.strokeWidth;
-    overlay.setStyle(toolState);
+overlay.onTextAnnotationSelected((ann: TextAnnotation | null) => {
+  editingTextAnn  = ann;
+  editingShapeAnn = null;
+  if (ann) {
+    toolbar.showTextStyles(ann);
+    toolbar.hideShapeStyles();
+  } else if (overlay.currentTool !== "text") {
+    toolbar.hideTextStyles();
   }
 });
 
-overlay.onTextAnnotationSelected((ann: TextAnnotation | null) => {
-  editingTextAnn = ann;
+overlay.onShapeAnnotationSelected((ann: RectAnnotation | CircleAnnotation | null) => {
+  editingShapeAnn = ann;
+  editingTextAnn  = null;
   if (ann) {
-    toolbar.showTextStyles(ann);
-  } else if (overlay.currentTool !== "text") {
+    toolbar.showShapeStyles(ann);
     toolbar.hideTextStyles();
+  } else if (overlay.currentTool !== "rect" && overlay.currentTool !== "circle") {
+    toolbar.hideShapeStyles();
   }
 });
 
@@ -340,8 +358,10 @@ window.addEventListener("keydown", (e: KeyboardEvent) => {
   } else if (overlay.currentTool !== "select") {
     overlay.setTool("select");
     toolbar.clearActiveTool();
-    editingTextAnn = null;
+    editingTextAnn  = null;
+    editingShapeAnn = null;
     toolbar.hideTextStyles();
+    toolbar.hideShapeStyles();
   }
 });
 

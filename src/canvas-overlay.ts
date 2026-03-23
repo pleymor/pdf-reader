@@ -8,6 +8,7 @@ import {
   type Annotation,
   type CircleAnnotation,
   type RectAnnotation,
+  type RgbColor,
   type SignatureAnnotation,
   type TextAlignmentValue,
   type TextAnnotation,
@@ -19,7 +20,7 @@ type AnnotationMovedHandler        = (ann: Annotation) => void;
 type AnnotationRemovedHandler      = (ann: Annotation) => void;
 type AnnotationReorderHandler      = (ann: Annotation, dir: "front" | "back") => void;
 type TextAnnotationSelectedHandler  = (ann: TextAnnotation | null) => void;
-type AnnotationStyleChangedHandler  = (ann: Annotation) => void;
+type ShapeAnnotationSelectedHandler = (ann: RectAnnotation | CircleAnnotation | null) => void;
 type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 const HANDLE_R = 4; // half-size of handle squares in px
@@ -69,8 +70,8 @@ export class CanvasOverlay {
   private movedHandlers:        AnnotationMovedHandler[]        = [];
   private removedHandlers:      AnnotationRemovedHandler[]      = [];
   private reorderHandlers:      AnnotationReorderHandler[]      = [];
-  private textSelectedHandlers:   TextAnnotationSelectedHandler[]  = [];
-  private styleChangedHandlers:   AnnotationStyleChangedHandler[]  = [];
+  private textSelectedHandlers:  TextAnnotationSelectedHandler[]  = [];
+  private shapeSelectedHandlers: ShapeAnnotationSelectedHandler[] = [];
 
   private committed: Annotation[] = [];
   /** Annotations already burned into the PDF content stream — rendered by
@@ -101,8 +102,8 @@ export class CanvasOverlay {
   onAnnotationMoved      (h: AnnotationMovedHandler):        void { this.movedHandlers.push(h); }
   onAnnotationRemoved    (h: AnnotationRemovedHandler):      void { this.removedHandlers.push(h); }
   onAnnotationReordered  (h: AnnotationReorderHandler):      void { this.reorderHandlers.push(h); }
-  onTextAnnotationSelected (h: TextAnnotationSelectedHandler): void { this.textSelectedHandlers.push(h); }
-  onAnnotationStyleChanged (h: AnnotationStyleChangedHandler): void { this.styleChangedHandlers.push(h); }
+  onTextAnnotationSelected (h: TextAnnotationSelectedHandler):  void { this.textSelectedHandlers.push(h); }
+  onShapeAnnotationSelected(h: ShapeAnnotationSelectedHandler): void { this.shapeSelectedHandlers.push(h); }
 
   /** Mark these annotations as already burned into the PDF content stream.
    *  The overlay will skip rendering them to avoid visual doubling — they are
@@ -128,10 +129,19 @@ export class CanvasOverlay {
   private emitReordered    (a: Annotation, dir: "front" | "back"): void {
     this.reorderHandlers.forEach(h => h(a, dir));
   }
-  private emitTextSelected   (a: TextAnnotation | null): void { this.textSelectedHandlers.forEach(h => h(a)); }
-  private emitStyleChanged   (a: Annotation):            void { this.styleChangedHandlers.forEach(h => h(a)); }
+  private emitTextSelected  (a: TextAnnotation | null):                void { this.textSelectedHandlers.forEach(h => h(a)); }
+  private emitShapeSelected (a: RectAnnotation | CircleAnnotation | null): void { this.shapeSelectedHandlers.forEach(h => h(a)); }
 
   get currentTool(): ToolKind { return this.activeTool; }
+
+  /** Apply shape style fields to an existing rect/circle and redraw. */
+  applyShapeAnnotationStyle(ann: RectAnnotation | CircleAnnotation, color: RgbColor, strokeWidth: number): void {
+    this.unmarkBurned(ann);
+    ann.color = { ...color };
+    ann.strokeWidth = strokeWidth;
+    this.redrawCommitted();
+    this.emitMoved(ann);
+  }
 
   /** Apply text style fields to an existing annotation and redraw. */
   applyTextAnnotationStyle(
@@ -500,6 +510,7 @@ export class CanvasOverlay {
       }
       this.redrawCommitted();
       this.emitTextSelected(hit?.kind === "text" ? hit : null);
+      this.emitShapeSelected((hit?.kind === "rect" || hit?.kind === "circle") ? hit : null);
       return;
     }
 
@@ -730,16 +741,11 @@ export class CanvasOverlay {
     if (!hit) return;
     e.preventDefault();
     if (hit.kind === "text") this.handleTextEdit(hit);
-    else if (hit.kind === "rect" || hit.kind === "circle") this.handleShapeEdit(hit, e.offsetX, e.offsetY);
 
   };
 
   private onContextMenu = (e: MouseEvent): void => {
-    e.preventDefault();
-    if (this.activeTool !== "select") return;
-    const hit = this.hitTest(e.offsetX, e.offsetY);
-    if (hit?.kind === "text") this.handleTextStyleEdit(hit);
-    else if (hit?.kind === "rect" || hit?.kind === "circle") this.handleShapeEdit(hit, e.offsetX, e.offsetY);
+    e.preventDefault(); // suppress browser context menu
   };
 
   reorderTextAnnotation(ann: Annotation, dir: "front" | "back"): void {
@@ -829,63 +835,6 @@ export class CanvasOverlay {
     this.selected = ann;
     this.redrawCommitted();
     this.emitTextSelected(ann);
-  }
-
-  private handleShapeEdit(ann: RectAnnotation | CircleAnnotation, cx: number, cy: number): void {
-    const container = document.getElementById("viewer-container")!;
-    const pop = document.createElement("div");
-    pop.style.cssText = `
-      position: absolute; left: ${cx + 10}px; top: ${cy + 10}px;
-      background: #2a2a2a; border: 1px solid #555; border-radius: 6px;
-      padding: 8px; display: flex; gap: 8px; align-items: center;
-      z-index: 20; box-shadow: 0 2px 10px rgba(0,0,0,.6);
-    `;
-    const colorInput = document.createElement("input");
-    colorInput.type  = "color";
-    colorInput.value = rgbToHex(ann.color);
-    colorInput.title = "Stroke colour";
-    colorInput.style.cssText = "width:32px;height:24px;border:none;padding:0;cursor:pointer;background:none;";
-
-    const strokeLabel = document.createElement("span");
-    strokeLabel.textContent = "w:";
-    strokeLabel.style.cssText = "color:#ccc;font-size:12px;";
-    const strokeInput = document.createElement("input");
-    strokeInput.type  = "number";
-    strokeInput.value = String(ann.strokeWidth);
-    strokeInput.min = "0.5"; strokeInput.max = "20"; strokeInput.step = "0.5";
-    strokeInput.style.cssText = "width:44px;background:#1e1e1e;color:#e8e8e8;border:1px solid #555;border-radius:3px;padding:2px 4px;font-size:12px;";
-
-    const apply = (): void => {
-      this.unmarkBurned(ann); // snapshot old bounds before modifying
-      ann.color = hexToRgb(colorInput.value);
-      const sw = parseFloat(strokeInput.value);
-      if (!isNaN(sw) && sw > 0) ann.strokeWidth = sw;
-      this.redrawCommitted();
-      this.emitMoved(ann);
-      this.emitStyleChanged(ann);
-    };
-    colorInput.addEventListener("input", apply);
-    strokeInput.addEventListener("change", apply);
-
-    const frontBtn = document.createElement("button");
-    frontBtn.textContent = "↑"; frontBtn.title = "Mettre au premier plan";
-    frontBtn.style.cssText = "width:26px;height:24px;border:1px solid #555;border-radius:3px;background:#3a3a3a;color:#e8e8e8;cursor:pointer;font-size:12px;padding:0;";
-    const backBtn = document.createElement("button");
-    backBtn.textContent = "↓"; backBtn.title = "Envoyer en arrière-plan";
-    backBtn.style.cssText = "width:26px;height:24px;border:1px solid #555;border-radius:3px;background:#3a3a3a;color:#e8e8e8;cursor:pointer;font-size:12px;padding:0;";
-    frontBtn.addEventListener("click", () => { this.reorderAnnotation(ann, "front"); pop.remove(); });
-    backBtn.addEventListener ("click", () => { this.reorderAnnotation(ann, "back");  pop.remove(); });
-
-    const dismiss = (ev: MouseEvent): void => {
-      if (!pop.contains(ev.target as Node)) {
-        pop.remove();
-        document.removeEventListener("mousedown", dismiss);
-      }
-    };
-    setTimeout(() => document.addEventListener("mousedown", dismiss), 0);
-    pop.append(colorInput, strokeLabel, strokeInput, frontBtn, backBtn);
-    container.appendChild(pop);
-    colorInput.focus();
   }
 
   /** Place a signature image on the current page at canvas coordinates. */
