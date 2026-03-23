@@ -48,3 +48,28 @@ export async function readAnnotations(
 ): Promise<Annotation[]> {
   return invoke<Annotation[]>("read_annotations", { filePath });
 }
+
+export interface StartupArgs {
+  filePath: string | null;
+  shouldPrint: boolean;
+}
+
+/** Returns the CLI arguments parsed at startup (file path and print flag). */
+export async function getStartupArgs(): Promise<StartupArgs> {
+  return invoke<StartupArgs>("get_startup_args");
+}
+
+/** Returns true if our ProgID is already registered in HKCU. */
+export async function checkPdfAssociation(): Promise<boolean> {
+  return invoke<boolean>("check_pdf_association");
+}
+
+/** Writes ProgID and .pdf association into HKCU (no admin required). */
+export async function registerPdfHandler(): Promise<void> {
+  return invoke<void>("register_pdf_handler");
+}
+
+/** Opens Windows Settings → Default Apps. */
+export async function openDefaultAppsSettings(): Promise<void> {
+  return invoke<void>("open_default_apps_settings");
+}
