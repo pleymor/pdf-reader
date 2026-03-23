@@ -141,7 +141,9 @@ export class CanvasOverlay {
     const right  = (ann.x + ann.width) * scale;
     const bottom = (pageHeightPt - ann.y) * scale;
     const top    = ann.kind === "text"
-      ? bottom - ann.fontSize * scale * 1.5
+      ? (ann.height !== undefined
+          ? bottom - ann.height * scale
+          : bottom - ann.fontSize * scale * 1.5)
       : (pageHeightPt - (ann.y + ann.height)) * scale;
     return { left, top, right, bottom };
   }
@@ -300,19 +302,24 @@ export class CanvasOverlay {
       ctx.fillStyle = rgbToCss(ann.color);
       ctx.font      = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "normal"} ${ann.fontSize * scale}px Helvetica, Arial, sans-serif`;
       ctx.textAlign = ann.alignment as CanvasTextAlign;
-      const tx = ann.alignment === "left" ? x : ann.alignment === "right" ? x + ann.width * scale : x + (ann.width * scale) / 2;
-      ctx.fillText(ann.content, tx, y);
-      if (ann.underline) {
-        const w     = ctx.measureText(ann.content).width;
-        const ulY   = y + ann.fontSize * scale * 0.12;
-        const startX = ann.alignment === "left" ? x : ann.alignment === "right" ? tx - w : tx - w / 2;
-        ctx.strokeStyle = rgbToCss(ann.color);
-        ctx.lineWidth   = 1;
-        ctx.beginPath();
-        ctx.moveTo(startX, ulY);
-        ctx.lineTo(startX + w, ulY);
-        ctx.stroke();
-      }
+      const lineH   = ann.fontSize * scale * 1.2;
+      const tx      = ann.alignment === "left" ? x : ann.alignment === "right" ? x + ann.width * scale : x + (ann.width * scale) / 2;
+      const lines   = ann.content.split("\n");
+      lines.forEach((line, i) => {
+        const ly = y + i * lineH;
+        ctx.fillText(line, tx, ly);
+        if (ann.underline) {
+          const w      = ctx.measureText(line).width;
+          const ulY    = ly + ann.fontSize * scale * 0.12;
+          const startX = ann.alignment === "left" ? x : ann.alignment === "right" ? tx - w : tx - w / 2;
+          ctx.strokeStyle = rgbToCss(ann.color);
+          ctx.lineWidth   = 1;
+          ctx.beginPath();
+          ctx.moveTo(startX, ulY);
+          ctx.lineTo(startX + w, ulY);
+          ctx.stroke();
+        }
+      });
 
     } else if (ann.kind === "signature") {
       const { x, y } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
@@ -331,17 +338,19 @@ export class CanvasOverlay {
     const h  = Math.abs(curY - this.startY);
     ctx.strokeStyle = rgbToCss(this.style.color);
     ctx.lineWidth   = this.style.strokeWidth;
+    ctx.setLineDash([4, 3]);
     if (this.activeTool === "rect") {
-      ctx.setLineDash([4, 3]);
       ctx.strokeRect(x0, y0, w, h);
-      ctx.setLineDash([]);
     } else if (this.activeTool === "circle") {
-      ctx.setLineDash([4, 3]);
       ctx.beginPath();
       ctx.ellipse(x0 + w / 2, y0 + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.setLineDash([]);
+    } else if (this.activeTool === "text") {
+      ctx.strokeStyle = "#aaaaaa";
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(x0, y0, w, h);
     }
+    ctx.setLineDash([]);
   }
 
   // ── Mouse handlers ────────────────────────────────────────────────────────────
@@ -379,8 +388,10 @@ export class CanvasOverlay {
     }
 
     if (this.activeTool === "text") {
-      e.preventDefault(); // prevent canvas click from stealing focus away from the input
-      this.handleTextClick(e.offsetX, e.offsetY);
+      e.preventDefault();
+      this.isDrawing = true;
+      this.startX = e.offsetX;
+      this.startY = e.offsetY;
       return;
     }
 
@@ -448,6 +459,23 @@ export class CanvasOverlay {
     const y0 = Math.min(this.startY, e.offsetY);
     const w  = Math.abs(e.offsetX - this.startX);
     const h  = Math.abs(e.offsetY - this.startY);
+    if (this.activeTool === "text") {
+      this.redrawCommitted();
+      const isDrag = w >= 8 && h >= 8;
+      if (isDrag) {
+        // Open input sized to the drawn box
+        this.openTextInput(x0, y0, w, h);
+      } else {
+        // Single click: default width, no fixed height
+        this.openTextInput(
+          this.startX,
+          this.startY - this.style.fontSize * this.scale,
+          0, 0
+        );
+      }
+      return;
+    }
+
     if (w < 4 || h < 4) { this.redrawCommitted(); return; }
 
     const pdfTL = canvasToPdf(x0,     y0,     this.scale, this.pageHeightPt);
@@ -508,22 +536,33 @@ export class CanvasOverlay {
 
   // ── Text placement ───────────────────────────────────────────────────────────
 
-  private handleTextClick(canvasX: number, canvasY: number): void {
+  /**
+   * @param left     canvas-px left edge of the text box
+   * @param top      canvas-px top edge of the text box
+   * @param widthPx  drawn width in canvas-px; 0 = auto (default size)
+   * @param heightPx drawn height in canvas-px; 0 = auto (grows with content)
+   */
+  private openTextInput(left: number, top: number, widthPx: number, heightPx: number): void {
     const container = document.getElementById("viewer-container")!;
+    const fontSize  = this.style.fontSize * this.scale;
+    const hasWidth  = widthPx > 0;
+    const hasHeight = heightPx > 0;
 
     const input = document.createElement("div");
     input.contentEditable = "true";
     input.style.cssText = `
       position: absolute;
-      left: ${canvasX}px; top: ${canvasY - this.style.fontSize * this.scale}px;
-      min-width: 80px; max-width: ${this.canvas.width - canvasX}px;
-      font-size: ${this.style.fontSize * this.scale}px; font-family: Helvetica, Arial, sans-serif;
+      left: ${left}px; top: ${top}px;
+      ${hasWidth  ? `width: ${widthPx}px;`  : "min-width: 120px;"}
+      ${hasHeight ? `height: ${heightPx}px; overflow-y: hidden;` : ""}
+      font-size: ${fontSize}px; line-height: 1.2; font-family: Helvetica, Arial, sans-serif;
       font-weight: ${this.style.bold ? "bold" : "normal"};
       font-style: ${this.style.italic ? "italic" : "normal"};
       text-decoration: ${this.style.underline ? "underline" : "none"};
+      text-align: ${this.style.alignment};
       color: ${rgbToCss(this.style.color)};
-      outline: 1px dashed #aaa; background: rgba(0,0,0,0.1);
-      padding: 1px 4px; white-space: pre; z-index: 20;
+      outline: 1px dashed #aaa; background: rgba(0,0,0,0.08);
+      padding: 2px 4px; white-space: pre-wrap; z-index: 20;
     `;
 
     const commit = (): void => {
@@ -532,12 +571,18 @@ export class CanvasOverlay {
       input.remove();
       document.removeEventListener("mousedown", outsideClick, true);
       if (content) {
-        const approxWidth = content.length * this.style.fontSize * 0.55 + 10;
-        const pdfCoords = canvasToPdf(canvasX, canvasY, this.scale, this.pageHeightPt);
+        // baseline = top of box + top padding (2px) + font size
+        const baselineCanvasY = top + 2 + fontSize;
+        const pdfCoords = canvasToPdf(left, baselineCanvasY, this.scale, this.pageHeightPt);
+        const annWidth  = hasWidth
+          ? widthPx / this.scale
+          : content.length * this.style.fontSize * 0.55 + 10;
+        const annHeight = hasHeight ? heightPx / this.scale : undefined;
         const ann: TextAnnotation = {
           kind: "text", page: this.currentPage,
           x: pdfCoords.x, y: pdfCoords.y,
-          width: approxWidth,
+          width: annWidth,
+          ...(annHeight !== undefined && { height: annHeight }),
           content,
           color: { ...this.style.color },
           fontSize: this.style.fontSize,
@@ -564,7 +609,6 @@ export class CanvasOverlay {
 
     container.appendChild(input);
     input.focus();
-    // Defer listener so it doesn't fire on the same mousedown that created this input
     setTimeout(() => document.addEventListener("mousedown", outsideClick, true), 0);
   }
 
@@ -591,13 +635,14 @@ export class CanvasOverlay {
       position: absolute;
       left: ${canvasX}px; top: ${canvasY - ann.fontSize * scale}px;
       min-width: 80px; max-width: ${this.canvas.width - canvasX}px;
-      font-size: ${ann.fontSize * scale}px; font-family: Helvetica, Arial, sans-serif;
+      font-size: ${ann.fontSize * scale}px; line-height: 1.2; font-family: Helvetica, Arial, sans-serif;
       font-weight: ${ann.bold ? "bold" : "normal"};
       font-style: ${ann.italic ? "italic" : "normal"};
       text-decoration: ${ann.underline ? "underline" : "none"};
+      text-align: ${ann.alignment};
       color: ${rgbToCss(ann.color)};
       outline: 1px dashed #aaa; background: transparent;
-      padding: 1px 2px; white-space: pre; z-index: 10;
+      padding: 2px 4px; white-space: pre-wrap; z-index: 10;
     `;
     const commit = (): void => {
       if (!input.isConnected) return;
