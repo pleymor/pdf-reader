@@ -28,12 +28,14 @@ export async function getPageCount(filePath: string): Promise<number> {
 export async function saveAnnotatedPdf(
   inputPath: string,
   outputPath: string,
-  annotations: Annotation[]
+  annotations: Annotation[],
+  rotationDelta = 0,
 ): Promise<void> {
   return invoke<void>("save_annotated_pdf", {
     inputPath,
     outputPath,
     annotations,
+    rotationDelta,
   });
 }
 

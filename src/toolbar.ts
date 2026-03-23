@@ -18,12 +18,14 @@ import {
   ICON_PRINT,
   ICON_RECT,
   ICON_CIRCLE,
+  ICON_ROTATE_CW,
 } from "./icons";
 
 type ToolbarEvent =
   | { type: "open" }
   | { type: "save" }
   | { type: "save-as" }
+  | { type: "rotate" }
   | { type: "zoom-in" }
   | { type: "zoom-out" }
   | { type: "page-prev" }
@@ -188,7 +190,12 @@ export class Toolbar {
     zoomOut.addEventListener("click", () => this.emit({ type: "zoom-out" }));
     const zoomIn = this.btn(ICON_ZOOM_IN, "Zoom in", "icon-btn");
     zoomIn.addEventListener("click", () => this.emit({ type: "zoom-in" }));
-    d.append(zoomOut, zoomIn, this.sep());
+
+    // Rotate
+    const rotateBtn = this.btn(ICON_ROTATE_CW, "Rotate 90° clockwise", "icon-btn");
+    rotateBtn.addEventListener("click", () => this.emit({ type: "rotate" }));
+
+    d.append(zoomOut, zoomIn, rotateBtn, this.sep());
 
     // Drawing tools
     const tools: [ToolKind, string, string][] = [

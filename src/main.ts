@@ -59,7 +59,8 @@ async function renderCurrentPage(): Promise<void> {
     viewer.currentPage,
     viewer.scale,
     viewer.pageHeightPt,
-    store.getForPage(viewer.currentPage)
+    store.getForPage(viewer.currentPage),
+    viewer.currentViewport ?? undefined
   );
   toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
 }
@@ -132,12 +133,13 @@ async function saveFile(forceDialog: boolean): Promise<void> {
   }
 
   try {
-    await saveAnnotatedPdf(filePath, target, store.getAll());
+    await saveAnnotatedPdf(filePath, target, store.getAll(), viewer.rotation);
     filePath = target; // subsequent saves use the saved file (stream IDs live there)
     setDirty(false);
 
     // Reload the PDF canvas from the saved file so the freshly burned annotations
-    // are shown by pdf.js. Then mark everything burned so the overlay doesn't double.
+    // are shown by pdf.js. The rotation was baked into the PDF's Rotate entry, so
+    // after load (which resets _rotation to 0) the page renders correctly via page.rotate.
     const savedPage = viewer.currentPage;
     await viewer.load(target);
     if (savedPage !== 1) await viewer.goToPage(savedPage);
@@ -174,6 +176,20 @@ toolbar.on(async (e) => {
       await saveFile(true);
       break;
 
+    case "rotate":
+      if (viewer.isLoaded()) {
+        await viewer.rotate();
+        setDirty(true);
+        overlay.syncToPage(
+          viewer.currentPage,
+          viewer.scale,
+          viewer.pageHeightPt,
+          store.getForPage(viewer.currentPage),
+          viewer.currentViewport ?? undefined
+        );
+      }
+      break;
+
     case "zoom-in":
       if (viewer.isLoaded()) {
         await viewer.adjustZoom(0.25);
@@ -181,7 +197,8 @@ toolbar.on(async (e) => {
           viewer.currentPage,
           viewer.scale,
           viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage)
+          store.getForPage(viewer.currentPage),
+          viewer.currentViewport ?? undefined
         );
       }
       break;
@@ -193,7 +210,8 @@ toolbar.on(async (e) => {
           viewer.currentPage,
           viewer.scale,
           viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage)
+          store.getForPage(viewer.currentPage),
+          viewer.currentViewport ?? undefined
         );
       }
       break;
@@ -205,7 +223,8 @@ toolbar.on(async (e) => {
           viewer.currentPage,
           viewer.scale,
           viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage)
+          store.getForPage(viewer.currentPage),
+          viewer.currentViewport ?? undefined
         );
         toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
       }
@@ -218,7 +237,8 @@ toolbar.on(async (e) => {
           viewer.currentPage,
           viewer.scale,
           viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage)
+          store.getForPage(viewer.currentPage),
+          viewer.currentViewport ?? undefined
         );
         toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
       }
@@ -231,7 +251,8 @@ toolbar.on(async (e) => {
           viewer.currentPage,
           viewer.scale,
           viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage)
+          store.getForPage(viewer.currentPage),
+          viewer.currentViewport ?? undefined
         );
         toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
       }

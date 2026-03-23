@@ -21,8 +21,25 @@ pub fn save_annotated_pdf(
     input_path: String,
     output_path: String,
     annotations: Vec<Annotation>,
+    rotation_delta: i64,
 ) -> Result<(), String> {
     let mut doc = Document::load(&input_path).map_err(|e| e.to_string())?;
+
+    // Apply rotation to every page's Rotate entry before burning annotations.
+    if rotation_delta != 0 {
+        let page_ids: Vec<(u32, u16)> = doc.get_pages().values().copied().collect();
+        for page_id in page_ids {
+            if let Ok(lopdf::Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
+                let current = dict.get(b"Rotate")
+                    .ok()
+                    .and_then(|o| o.as_i64().ok())
+                    .unwrap_or(0);
+                let new_rotate = (current + rotation_delta).rem_euclid(360);
+                dict.set(b"Rotate", lopdf::Object::Integer(new_rotate));
+            }
+        }
+    }
+
     let mut meta = writer::load_meta(&doc);
 
     // Group annotations by page

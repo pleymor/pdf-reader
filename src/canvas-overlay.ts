@@ -15,6 +15,12 @@ import {
   type ToolKind,
 } from "./models";
 
+/** Minimal duck-type for pdfjs PageViewport — avoids importing pdfjs-dist here. */
+interface PdfViewport {
+  convertToViewportPoint(pdfX: number, pdfY: number): number[];
+  convertToPdfPoint(viewX: number, viewY: number): number[];
+}
+
 type AnnotationCreatedHandler      = (ann: Annotation) => void;
 type AnnotationMovedHandler        = (ann: Annotation) => void;
 type AnnotationRemovedHandler      = (ann: Annotation) => void;
@@ -59,11 +65,15 @@ export class CanvasOverlay {
   private dragOrigH = 0;
   private dragOffsetX = 0;
   private dragOffsetY = 0;
+  /** PDF coords of the mouse at drag-start — used for delta-based dragging. */
+  private dragStartPdfX = 0;
+  private dragStartPdfY = 0;
 
   // ── Page state ──────────────────────────────────────────────────────────────
   private currentPage = 1;
   private pageHeightPt = 841;
   private scale = 1.5;
+  private viewport: PdfViewport | null = null;
 
   // ── Callbacks ───────────────────────────────────────────────────────────────
   private createdHandlers:      AnnotationCreatedHandler[]      = [];
@@ -185,10 +195,31 @@ export class CanvasOverlay {
     this.canvas.style.pointerEvents = tool !== "signature" ? "auto" : "none";
   }
 
-  syncToPage(page: number, scale: number, pageHeightPt: number, annotations: Annotation[]): void {
+  /** Convert PDF user-space point → canvas pixel coords (handles rotation via viewport). */
+  private toCanvas(pdfX: number, pdfY: number): [number, number] {
+    if (this.viewport) {
+      const r = this.viewport.convertToViewportPoint(pdfX, pdfY);
+      return [r[0], r[1]];
+    }
+    const c = pdfToCanvas(pdfX, pdfY, this.scale, this.pageHeightPt);
+    return [c.x, c.y];
+  }
+
+  /** Convert canvas pixel coords → PDF user-space point (handles rotation via viewport). */
+  private toPdf(canvasX: number, canvasY: number): [number, number] {
+    if (this.viewport) {
+      const r = this.viewport.convertToPdfPoint(canvasX, canvasY);
+      return [r[0], r[1]];
+    }
+    const p = canvasToPdf(canvasX, canvasY, this.scale, this.pageHeightPt);
+    return [p.x, p.y];
+  }
+
+  syncToPage(page: number, scale: number, pageHeightPt: number, annotations: Annotation[], viewport?: PdfViewport): void {
     this.currentPage  = page;
     this.scale        = scale;
     this.pageHeightPt = pageHeightPt;
+    this.viewport     = viewport ?? null;
     this.selected = null;
     this.dragging = false;
     this.resizing = false;
@@ -207,22 +238,29 @@ export class CanvasOverlay {
   // ── Bounding box ─────────────────────────────────────────────────────────────
 
   private getAnnBounds(ann: Annotation): { left: number; top: number; right: number; bottom: number } {
-    const { scale, pageHeightPt } = this;
-    const left    = ann.x * scale;
-    const right   = (ann.x + ann.width) * scale;
-    const canvasY = (pageHeightPt - ann.y) * scale; // baseline for text; bottom edge for shapes
-    let top: number, bottom: number;
+    const { scale } = this;
     if (ann.kind === "text") {
-      // ann.y is the text baseline = boxTop + 2px padding + fontSize
-      const lineH     = ann.fontSize * scale * 1.2;
+      // ann.y is the baseline. Compute the canvas position of the baseline.
+      const [bx, by] = this.toCanvas(ann.x, ann.y);
+      const [bxRight] = this.toCanvas(ann.x + ann.width, ann.y);
+      const left   = Math.min(bx, bxRight);
+      const right  = Math.max(bx, bxRight);
+      const lineH  = ann.fontSize * scale * 1.2;
       const lineCount = this.textLineCount(ann);
-      top    = canvasY - 2 - ann.fontSize * scale;
-      bottom = top + lineCount * lineH + 4; // +4 for top+bottom padding
+      const top    = by - 2 - ann.fontSize * scale;
+      const bottom = top + lineCount * lineH + 4;
+      return { left, top, right, bottom };
     } else {
-      top    = (pageHeightPt - (ann.y + ann.height)) * scale;
-      bottom = canvasY;
+      // Convert the two opposite PDF corners and take the axis-aligned bounding box.
+      const [x1, y1] = this.toCanvas(ann.x, ann.y + ann.height);            // PDF top-left
+      const [x2, y2] = this.toCanvas(ann.x + ann.width, ann.y);             // PDF bottom-right
+      return {
+        left:   Math.min(x1, x2),
+        top:    Math.min(y1, y2),
+        right:  Math.max(x1, x2),
+        bottom: Math.max(y1, y2),
+      };
     }
-    return { left, top, right, bottom };
   }
 
   private hitTest(cx: number, cy: number): Annotation | null {
@@ -294,8 +332,7 @@ export class CanvasOverlay {
   private applyResize(mouseX: number, mouseY: number): void {
     const ann = this.dragTarget!;
     const h   = this.resizeHandle!;
-    const mx  = mouseX / this.scale;
-    const my  = this.pageHeightPt - mouseY / this.scale;
+    const [mx, my] = this.toPdf(mouseX, mouseY);
     const M   = MIN_SIZE_PT;
 
     if (h === "e" || h === "ne" || h === "se") {
@@ -420,24 +457,28 @@ export class CanvasOverlay {
     if (!force && this.burnedAnns.has(ann)) return;
 
     const ctx = this.ctx;
-    const { scale, pageHeightPt } = this;
+    const { scale } = this;
 
     if (ann.kind === "rect") {
-      const { x, y } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
+      const [x1, y1] = this.toCanvas(ann.x, ann.y + ann.height); // PDF top-left
+      const [x2, y2] = this.toCanvas(ann.x + ann.width, ann.y);  // PDF bottom-right
       ctx.strokeStyle = rgbToCss(ann.color);
       ctx.lineWidth   = ann.strokeWidth;
-      ctx.strokeRect(x, y - ann.height * scale, ann.width * scale, ann.height * scale);
+      ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
 
     } else if (ann.kind === "circle") {
-      const c = pdfToCanvas(ann.x + ann.width / 2, ann.y + ann.height / 2, scale, pageHeightPt);
+      const [x1, y1] = this.toCanvas(ann.x, ann.y + ann.height);
+      const [x2, y2] = this.toCanvas(ann.x + ann.width, ann.y);
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
       ctx.strokeStyle = rgbToCss(ann.color);
       ctx.lineWidth   = ann.strokeWidth;
       ctx.beginPath();
-      ctx.ellipse(c.x, c.y, (ann.width / 2) * scale, (ann.height / 2) * scale, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2, 0, 0, Math.PI * 2);
       ctx.stroke();
 
     } else if (ann.kind === "text") {
-      const { x, y } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
+      const [x, y] = this.toCanvas(ann.x, ann.y);
       ctx.fillStyle = rgbToCss(ann.color);
       ctx.font      = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "normal"} ${ann.fontSize * scale}px Helvetica, Arial, sans-serif`;
       ctx.textAlign = ann.alignment as CanvasTextAlign;
@@ -462,9 +503,11 @@ export class CanvasOverlay {
       });
 
     } else if (ann.kind === "signature") {
-      const { x, y } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
+      const [x1, y1] = this.toCanvas(ann.x,             ann.y + ann.height); // canvas top-left
+      const [x2, y2] = this.toCanvas(ann.x + ann.width, ann.y);              // canvas bottom-right
       const img = new Image();
-      img.onload = () => this.ctx.drawImage(img, x, y - ann.height * scale, ann.width * scale, ann.height * scale);
+      img.onload = () => this.ctx.drawImage(img,
+        Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
       img.src = `data:image/png;base64,${ann.imageData}`;
     }
   }
@@ -523,6 +566,7 @@ export class CanvasOverlay {
         this.dragOrigH   = hit.kind !== "text" ? hit.height : 0;
         this.dragOffsetX = e.offsetX - bounds.left;
         this.dragOffsetY = e.offsetY - bounds.top;
+        [this.dragStartPdfX, this.dragStartPdfY] = this.toPdf(e.offsetX, e.offsetY);
         this.canvas.style.cursor = "grabbing";
       }
       this.redrawCommitted();
@@ -552,14 +596,9 @@ export class CanvasOverlay {
         return;
       }
       if (this.dragging && this.dragTarget) {
-        const newLeft = e.offsetX - this.dragOffsetX;
-        const newTop  = e.offsetY - this.dragOffsetY;
-        this.dragTarget.x = newLeft / this.scale;
-        if (this.dragTarget.kind === "text") {
-          this.dragTarget.y = this.pageHeightPt - newTop / this.scale - this.dragTarget.fontSize * 1.5;
-        } else {
-          this.dragTarget.y = this.pageHeightPt - newTop / this.scale - this.dragTarget.height;
-        }
+        const [curPdfX, curPdfY] = this.toPdf(e.offsetX, e.offsetY);
+        this.dragTarget.x = this.dragOrigX + (curPdfX - this.dragStartPdfX);
+        this.dragTarget.y = this.dragOrigY + (curPdfY - this.dragStartPdfY);
         this.redrawCommitted();
         return;
       }
@@ -620,13 +659,15 @@ export class CanvasOverlay {
 
     if (w < 4 || h < 4) { this.redrawCommitted(); return; }
 
-    const pdfTL = canvasToPdf(x0,     y0,     this.scale, this.pageHeightPt);
-    const pdfBR = canvasToPdf(x0 + w, y0 + h, this.scale, this.pageHeightPt);
+    const [p1x, p1y] = this.toPdf(x0,     y0    );
+    const [p2x, p2y] = this.toPdf(x0 + w, y0 + h);
+    const px = Math.min(p1x, p2x), py = Math.min(p1y, p2y);
+    const pw = Math.abs(p2x - p1x), ph = Math.abs(p2y - p1y);
 
     if (this.activeTool === "rect") {
       const ann: RectAnnotation = {
         kind: "rect", page: this.currentPage,
-        x: pdfTL.x, y: pdfBR.y, width: pdfBR.x - pdfTL.x, height: pdfTL.y - pdfBR.y,
+        x: px, y: py, width: pw, height: ph,
         color: { ...this.style.color }, strokeWidth: this.style.strokeWidth,
       };
       this.committed.push(ann);
@@ -635,7 +676,7 @@ export class CanvasOverlay {
     } else if (this.activeTool === "circle") {
       const ann: CircleAnnotation = {
         kind: "circle", page: this.currentPage,
-        x: pdfTL.x, y: pdfBR.y, width: pdfBR.x - pdfTL.x, height: pdfTL.y - pdfBR.y,
+        x: px, y: py, width: pw, height: ph,
         color: { ...this.style.color }, strokeWidth: this.style.strokeWidth,
       };
       this.committed.push(ann);
@@ -713,13 +754,13 @@ export class CanvasOverlay {
       if (content) {
         // baseline = top of box + top padding (2px) + font size
         const baselineCanvasY = top + 2 + fontSize;
-        const pdfCoords = canvasToPdf(left, baselineCanvasY, this.scale, this.pageHeightPt);
+        const [pdfX, pdfY] = this.toPdf(left, baselineCanvasY);
         const annWidth = hasWidth
           ? widthPx / this.scale
           : content.length * this.style.fontSize * 0.55 + 10;
         const ann: TextAnnotation = {
           kind: "text", page: this.currentPage,
-          x: pdfCoords.x, y: pdfCoords.y,
+          x: pdfX, y: pdfY,
           width: annWidth,
           content,
           color: { ...this.style.color },
@@ -781,9 +822,8 @@ export class CanvasOverlay {
 
   private handleTextEdit(ann: TextAnnotation): void {
     const container = document.getElementById("viewer-container")!;
-    const { scale, pageHeightPt } = this;
-    const canvasX = ann.x * scale;
-    const canvasY = (pageHeightPt - ann.y) * scale; // baseline
+    const { scale } = this;
+    const [canvasX, canvasY] = this.toCanvas(ann.x, ann.y); // baseline
     // boxTop = baseline - 2px padding - fontSize (mirrors openTextInput commit logic)
     const boxTop = canvasY - 2 - ann.fontSize * scale;
     const boxW   = ann.width * scale;
@@ -856,10 +896,10 @@ export class CanvasOverlay {
 
   /** Place a signature image on the current page at canvas coordinates. */
   placeSignature(canvasX: number, canvasY: number, imageData: string, widthPt: number, heightPt: number): SignatureAnnotation {
-    const pdfCoords = canvasToPdf(canvasX, canvasY, this.scale, this.pageHeightPt);
+    const [pdfX, pdfY] = this.toPdf(canvasX, canvasY);
     const ann: SignatureAnnotation = {
       kind: "signature", page: this.currentPage,
-      x: pdfCoords.x, y: pdfCoords.y - heightPt,
+      x: pdfX, y: pdfY - heightPt,
       width: widthPt, height: heightPt, imageData,
     };
     this.committed.push(ann);
