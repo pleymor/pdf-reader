@@ -229,10 +229,6 @@ toolbar.on(async (e) => {
       overlay.setTool(e.tool);
       break;
 
-    case "style-change":
-      overlay.setStyle(e.style);
-      break;
-
     case "signature":
       sigModal.open();
       break;
