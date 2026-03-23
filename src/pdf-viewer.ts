@@ -147,6 +147,27 @@ export class PdfViewer {
     this._rotation = degrees;
   }
 
+  /** Renders all pages as JPEG data URLs (base64 only, no prefix) for silent printing. */
+  async renderAllPagesForPrint(dpi = 200): Promise<string[]> {
+    if (!this.pdfDoc) return [];
+    const scale = dpi / 72;
+    const results: string[] = [];
+    for (let i = 1; i <= this._pageCount; i++) {
+      const page = await this.pdfDoc.getPage(i);
+      const viewport = page.getViewport({
+        scale,
+        rotation: (page.rotate + this._rotation) % 360,
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d")!;
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      results.push(canvas.toDataURL("image/jpeg", 0.92).split(",")[1]);
+    }
+    return results;
+  }
+
   isLoaded(): boolean {
     return this.pdfDoc !== null;
   }

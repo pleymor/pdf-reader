@@ -110,6 +110,138 @@ pub fn register_pdf_handler() -> Result<(), String> {
     }
 }
 
+/// Renders PDF pages (JPEG bytes, base64-encoded) to the default Windows printer
+/// without showing any dialog.
+#[tauri::command]
+pub fn print_pages(pages_b64: Vec<String>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        print_pages_impl(pages_b64)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = pages_b64;
+        Err("Silent printing is only supported on Windows".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn print_pages_impl(pages_b64: Vec<String>) -> Result<(), String> {
+    use base64::Engine;
+    use std::ptr;
+    use winapi::shared::windef::HDC;
+    use winapi::um::wingdi::{
+        CreateDCW, DeleteDC, GetDeviceCaps, StretchDIBits, BITMAPINFO,
+        BITMAPINFOHEADER, DIB_RGB_COLORS, DOCINFOW, HORZRES, SRCCOPY, VERTRES,
+    };
+    use winapi::um::winspool::GetDefaultPrinterW;
+
+    // Get default printer name
+    let mut size = 256u32;
+    let mut name_buf = vec![0u16; size as usize];
+    let ok = unsafe { GetDefaultPrinterW(name_buf.as_mut_ptr(), &mut size) };
+    if ok == 0 {
+        return Err("No default printer found".to_string());
+    }
+
+    // Create a DC for the default printer
+    let hdc: HDC = unsafe {
+        CreateDCW(
+            ptr::null(),
+            name_buf.as_ptr(),
+            ptr::null(),
+            ptr::null(),
+        )
+    };
+    if hdc.is_null() {
+        return Err("Failed to create printer DC".to_string());
+    }
+
+    let page_w = unsafe { GetDeviceCaps(hdc, HORZRES) };
+    let page_h = unsafe { GetDeviceCaps(hdc, VERTRES) };
+
+    // Start print job
+    let doc_name: Vec<u16> = "PDF Document\0".encode_utf16().collect();
+    let doc_info = DOCINFOW {
+        cbSize: std::mem::size_of::<DOCINFOW>() as i32,
+        lpszDocName: doc_name.as_ptr(),
+        lpszOutput: ptr::null(),
+        lpszDatatype: ptr::null(),
+        fwType: 0,
+    };
+    let job = unsafe { winapi::um::wingdi::StartDocW(hdc, &doc_info) };
+    if job <= 0 {
+        unsafe { DeleteDC(hdc) };
+        return Err("StartDocW failed".to_string());
+    }
+
+    for page_b64 in &pages_b64 {
+        let jpeg_bytes = base64::engine::general_purpose::STANDARD
+            .decode(page_b64.trim())
+            .map_err(|e| format!("base64: {e}"))?;
+
+        let img = image::load_from_memory(&jpeg_bytes)
+            .map_err(|e| format!("image decode: {e}"))?
+            .into_rgb8();
+        let (img_w, img_h) = img.dimensions();
+        let rgb = img.as_raw();
+
+        // Convert RGB → BGR with 4-byte row alignment (required by GDI)
+        let row_stride = (img_w as usize * 3 + 3) & !3;
+        let mut dib = vec![0u8; row_stride * img_h as usize];
+        for y in 0..img_h as usize {
+            for x in 0..img_w as usize {
+                let s = y * img_w as usize * 3 + x * 3;
+                let d = y * row_stride + x * 3;
+                dib[d] = rgb[s + 2]; // B
+                dib[d + 1] = rgb[s + 1]; // G
+                dib[d + 2] = rgb[s]; // R
+            }
+        }
+
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: img_w as i32,
+                biHeight: -(img_h as i32), // top-down
+                biPlanes: 1,
+                biBitCount: 24,
+                biCompression: 0, // BI_RGB
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [winapi::um::wingdi::RGBQUAD {
+                rgbBlue: 0,
+                rgbGreen: 0,
+                rgbRed: 0,
+                rgbReserved: 0,
+            }],
+        };
+
+        unsafe { winapi::um::wingdi::StartPage(hdc) };
+        unsafe {
+            StretchDIBits(
+                hdc,
+                0, 0, page_w, page_h,
+                0, 0, img_w as i32, img_h as i32,
+                dib.as_ptr() as *const _,
+                &bmi,
+                DIB_RGB_COLORS,
+                SRCCOPY,
+            )
+        };
+        unsafe { winapi::um::wingdi::EndPage(hdc) };
+    }
+
+    unsafe { winapi::um::wingdi::EndDoc(hdc) };
+    unsafe { DeleteDC(hdc) };
+
+    Ok(())
+}
+
 /// Registers only the print verb (silent, no prompt needed).
 /// Called at every startup so Explorer's context menu is always available
 /// regardless of how the default-app association was set.

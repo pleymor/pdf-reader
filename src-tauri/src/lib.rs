@@ -41,6 +41,7 @@ pub fn run() {
             commands::pdf::get_page_count,
             commands::pdf::save_annotated_pdf,
             commands::pdf::read_annotations,
+            commands::shell::print_pages,
             commands::shell::get_startup_args,
             commands::shell::check_pdf_association,
             commands::shell::register_pdf_handler,

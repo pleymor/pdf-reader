@@ -19,6 +19,7 @@ import {
   checkPdfAssociation,
   registerPdfHandler,
   registerPrintVerb,
+  printPages,
 } from "./tauri-bridge";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -59,7 +60,8 @@ document.getElementById("viewer-container")!.style.display = "none";
       if (startup.shouldPrint) {
         document.getElementById("toolbar-container")!.style.display = "none";
         await loadPdf(startup.filePath);
-        window.print();
+        const pages = await viewer.renderAllPagesForPrint(200);
+        await printPages(pages);
         await appWindow.close();
       } else {
         await loadPdf(startup.filePath);

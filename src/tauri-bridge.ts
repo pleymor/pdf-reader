@@ -74,6 +74,11 @@ export async function registerPrintVerb(): Promise<void> {
   return invoke<void>("register_print_verb");
 }
 
+/** Sends pre-rendered page images (base64 JPEG) to the default Windows printer silently. */
+export async function printPages(pagesB64: string[]): Promise<void> {
+  return invoke<void>("print_pages", { pagesB64 });
+}
+
 /** Opens Windows Settings → Default Apps. */
 export async function openDefaultAppsSettings(): Promise<void> {
   return invoke<void>("open_default_apps_settings");
