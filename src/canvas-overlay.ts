@@ -703,6 +703,7 @@ export class CanvasOverlay {
     if (this.activeTool !== "select") return;
     const hit = this.hitTest(e.offsetX, e.offsetY);
     if (hit?.kind === "text") this.handleTextStyleEdit(hit, e.offsetX, e.offsetY);
+    else if (hit?.kind === "rect" || hit?.kind === "circle") this.handleShapeEdit(hit, e.offsetX, e.offsetY);
   };
 
   private handleTextEdit(ann: TextAnnotation): void {
