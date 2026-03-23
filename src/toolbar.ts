@@ -28,6 +28,7 @@ export class Toolbar {
   private handlers: EventHandler[] = [];
 
   private el: HTMLElement;
+  private documentSection!: HTMLElement;
   private pageInput!: HTMLInputElement;
   private pageTotal!: HTMLSpanElement;
   private pageNavSection!: HTMLElement;
@@ -66,6 +67,10 @@ export class Toolbar {
     if (this.pageNavSection) {
       this.pageNavSection.style.display = total >= 2 ? "flex" : "none";
     }
+  }
+
+  setLoaded(loaded: boolean): void {
+    this.documentSection.style.display = loaded ? "contents" : "none";
   }
 
   getStyle(): ActiveToolState {
@@ -123,10 +128,18 @@ export class Toolbar {
   }
 
   private build(): void {
-    // Open
+    // Open (always visible)
     const openBtn = this.btn("Open", "Open PDF");
     openBtn.addEventListener("click", () => this.emit({ type: "open" }));
-    this.el.append(openBtn, this.sep());
+    this.el.append(openBtn);
+
+    // Everything below requires an open document — hidden until setLoaded(true)
+    this.documentSection = document.createElement("div");
+    this.documentSection.style.display = "none";
+    this.el.append(this.documentSection);
+    const d = this.documentSection;
+
+    d.append(this.sep());
 
     // Page navigation
     const prevBtn = this.btn("◀", "Previous page", "icon-btn");
@@ -155,14 +168,14 @@ export class Toolbar {
     this.pageNavSection = document.createElement("div");
     this.pageNavSection.style.cssText = "display:none;align-items:center;gap:4px;";
     this.pageNavSection.append(navWrapper, this.sep());
-    this.el.append(this.pageNavSection);
+    d.append(this.pageNavSection);
 
     // Zoom
     const zoomOut = this.btn("−", "Zoom out", "icon-btn");
     zoomOut.addEventListener("click", () => this.emit({ type: "zoom-out" }));
     const zoomIn = this.btn("+", "Zoom in", "icon-btn");
     zoomIn.addEventListener("click", () => this.emit({ type: "zoom-in" }));
-    this.el.append(zoomOut, zoomIn, this.sep());
+    d.append(zoomOut, zoomIn, this.sep());
 
     // Drawing tools
     const tools: [ToolKind, string, string][] = [
@@ -182,14 +195,14 @@ export class Toolbar {
         this.setActiveTool(kind);
       });
       this.toolBtns[kind] = b;
-      this.el.append(b);
+      d.append(b);
     }
 
     // Contextual style sections (hidden by default)
-    this.buildTextStyleSection();
-    this.buildShapeStyleSection();
+    this.buildTextStyleSection(d);
+    this.buildShapeStyleSection(d);
 
-    this.el.append(this.sep());
+    d.append(this.sep());
 
     // Save / Save As / Print
     const saveBtn = this.btn("Save", "Save PDF");
@@ -200,10 +213,10 @@ export class Toolbar {
     printBtn.textContent = "🖨";
     printBtn.title = "Print";
     printBtn.addEventListener("click", () => window.print());
-    this.el.append(saveBtn, saveAsBtn, this.sep(), printBtn);
+    d.append(saveBtn, saveAsBtn, this.sep(), printBtn);
   }
 
-  private buildTextStyleSection(): void {
+  private buildTextStyleSection(container: HTMLElement): void {
     this.textStyleSection = document.createElement("div");
     this.textStyleSection.style.cssText = "display:none;align-items:center;gap:4px;";
 
@@ -283,10 +296,10 @@ export class Toolbar {
     backBtn.addEventListener ("click", () => this.emit({ type: "layer-change", dir: "back"  }));
     this.textStyleSection.append(frontBtn, backBtn);
 
-    this.el.append(this.textStyleSection);
+    container.append(this.textStyleSection);
   }
 
-  private buildShapeStyleSection(): void {
+  private buildShapeStyleSection(container: HTMLElement): void {
     this.shapeStyleSection = document.createElement("div");
     this.shapeStyleSection.style.cssText = "display:none;align-items:center;gap:4px;";
 
@@ -330,7 +343,7 @@ export class Toolbar {
     backBtn.addEventListener ("click", () => this.emit({ type: "layer-change", dir: "back"  }));
     this.shapeStyleSection.append(frontBtn, backBtn);
 
-    this.el.append(this.shapeStyleSection);
+    container.append(this.shapeStyleSection);
   }
 
   private emitStyleChange(): void {

@@ -37,6 +37,9 @@ const toolbar = new Toolbar();
 const overlay = new CanvasOverlay(toolState);
 const sigModal = new SignatureModal();
 
+// Hide viewer until a PDF is loaded
+document.getElementById("viewer-container")!.style.display = "none";
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function showToast(msg: string, isError = false): void {
@@ -70,6 +73,8 @@ async function promptPassword(fp: string): Promise<void> {
     filePath = fp;
     outputPath = null;
     setDirty(false);
+    toolbar.setLoaded(true);
+    document.getElementById("viewer-container")!.style.display = "";
     await renderCurrentPage();
   } catch {
     showToast("Wrong password or could not open file.", true);
@@ -93,6 +98,8 @@ async function loadPdf(path: string): Promise<void> {
     overlay.markBurned(saved);
 
     setDirty(false);
+    toolbar.setLoaded(true);
+    document.getElementById("viewer-container")!.style.display = "";
     await renderCurrentPage();
   } catch (err: unknown) {
     const msg = String(err);
