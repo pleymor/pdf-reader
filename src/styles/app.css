@@ -241,3 +241,25 @@ input[type="color"].color-picker {
 
 .toast.hidden { display: none; }
 .toast.error { border-color: #c0392b; color: #e74c3c; }
+
+/* ── Print ───────────────────────────────────────────────────────────────── */
+
+@media print {
+  #toolbar-container,
+  .toast { display: none !important; }
+
+  html, body, #app, #viewer-scroll {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+  }
+
+  #viewer-scroll {
+    padding: 0;
+    justify-content: flex-start;
+  }
+
+  #viewer-container {
+    box-shadow: none;
+  }
+}
