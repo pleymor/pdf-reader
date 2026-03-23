@@ -93,6 +93,8 @@ export class CanvasOverlay {
     this.canvas.addEventListener("dblclick",     this.onDblClick);
     this.canvas.addEventListener("contextmenu",  this.onContextMenu);
     window.addEventListener("keydown", this.onKeyDown);
+
+    this.applyPointerEvents(this.activeTool);
   }
 
   onAnnotationCreated    (h: AnnotationCreatedHandler):      void { this.createdHandlers.push(h); }
