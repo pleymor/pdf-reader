@@ -137,14 +137,21 @@ export class CanvasOverlay {
 
   private getAnnBounds(ann: Annotation): { left: number; top: number; right: number; bottom: number } {
     const { scale, pageHeightPt } = this;
-    const left   = ann.x * scale;
-    const right  = (ann.x + ann.width) * scale;
-    const bottom = (pageHeightPt - ann.y) * scale;
-    const top    = ann.kind === "text"
-      ? (ann.height !== undefined
-          ? bottom - ann.height * scale
-          : bottom - ann.fontSize * scale * 1.5)
-      : (pageHeightPt - (ann.y + ann.height)) * scale;
+    const left    = ann.x * scale;
+    const right   = (ann.x + ann.width) * scale;
+    const canvasY = (pageHeightPt - ann.y) * scale; // baseline for text; bottom edge for shapes
+    let top: number, bottom: number;
+    if (ann.kind === "text") {
+      // ann.y is the text baseline = boxTop + 2px padding + fontSize
+      // so boxTop = canvasY - 2 - fontSize_px
+      top    = canvasY - 2 - ann.fontSize * scale;
+      bottom = ann.height !== undefined
+        ? top + ann.height * scale
+        : canvasY + ann.fontSize * scale * 0.3; // approximate descender space
+    } else {
+      top    = (pageHeightPt - (ann.y + ann.height)) * scale;
+      bottom = canvasY;
+    }
     return { left, top, right, bottom };
   }
 
@@ -626,15 +633,21 @@ export class CanvasOverlay {
   private handleTextEdit(ann: TextAnnotation): void {
     const container = document.getElementById("viewer-container")!;
     const { scale, pageHeightPt } = this;
-    const { x: canvasX, y: canvasY } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
+    const canvasX = ann.x * scale;
+    const canvasY = (pageHeightPt - ann.y) * scale; // baseline
+    // boxTop = baseline - 2px padding - fontSize (mirrors openTextInput commit logic)
+    const boxTop   = canvasY - 2 - ann.fontSize * scale;
+    const boxW     = ann.width  * scale;
+    const boxH     = ann.height !== undefined ? ann.height * scale : 0;
 
     const input = document.createElement("div");
     input.contentEditable = "true";
     input.textContent = ann.content;
     input.style.cssText = `
       position: absolute;
-      left: ${canvasX}px; top: ${canvasY - ann.fontSize * scale}px;
-      min-width: 80px; max-width: ${this.canvas.width - canvasX}px;
+      left: ${canvasX}px; top: ${boxTop}px;
+      width: ${boxW}px;
+      ${boxH > 0 ? `height: ${boxH}px; overflow-y: hidden;` : ""}
       font-size: ${ann.fontSize * scale}px; line-height: 1.2; font-family: Helvetica, Arial, sans-serif;
       font-weight: ${ann.bold ? "bold" : "normal"};
       font-style: ${ann.italic ? "italic" : "normal"};
@@ -651,7 +664,10 @@ export class CanvasOverlay {
       document.removeEventListener("mousedown", outsideClick, true);
       if (content && content !== ann.content) {
         ann.content = content;
-        ann.width   = content.length * ann.fontSize * 0.55 + 10;
+        // Only auto-size width if there was no explicit drawn width
+        if (ann.height === undefined) {
+          ann.width = content.length * ann.fontSize * 0.55 + 10;
+        }
         this.emitMoved(ann);
       }
       this.redrawCommitted();
