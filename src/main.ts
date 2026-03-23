@@ -11,6 +11,7 @@ import {
   openPdfDialog,
   savePdfDialog,
   saveAnnotatedPdf,
+  readAnnotations,
 } from "./tauri-bridge";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -76,6 +77,13 @@ async function loadPdf(path: string): Promise<void> {
     store.clear();
     filePath = path;
     outputPath = null;
+
+    // Restore any previously saved annotations from the PDF catalog
+    const saved = await readAnnotations(path);
+    for (const ann of saved) {
+      store.add(ann);
+    }
+
     setDirty(false);
     await renderCurrentPage();
   } catch (err: unknown) {

@@ -10,6 +10,7 @@ pub fn run() {
             commands::dialog::save_pdf_dialog,
             commands::pdf::get_page_count,
             commands::pdf::save_annotated_pdf,
+            commands::pdf::read_annotations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application")

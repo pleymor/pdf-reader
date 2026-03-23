@@ -21,8 +21,9 @@ export async function getPageCount(filePath: string): Promise<number> {
 }
 
 /**
- * Burns `annotations` into the PDF at `inputPath` and writes the result
- * to `outputPath`. They may be the same path (overwrite).
+ * Stores `annotations` as JSON metadata in the PDF at `inputPath` and saves
+ * the result to `outputPath`. Annotations are NOT burned into the content
+ * stream, so they remain fully editable when the file is reopened.
  */
 export async function saveAnnotatedPdf(
   inputPath: string,
@@ -34,4 +35,14 @@ export async function saveAnnotatedPdf(
     outputPath,
     annotations,
   });
+}
+
+/**
+ * Reads editable annotations stored in the PDF's CCAnnot catalog entry.
+ * Returns an empty array if the file has no stored annotations.
+ */
+export async function readAnnotations(
+  filePath: string
+): Promise<Annotation[]> {
+  return invoke<Annotation[]>("read_annotations", { filePath });
 }

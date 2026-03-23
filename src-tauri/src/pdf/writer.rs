@@ -9,6 +9,56 @@ use super::models::{
     TextAnnotation,
 };
 
+// ── Annotation JSON storage ───────────────────────────────────────────────────
+
+/// Serialize `annotations` to JSON and store them in the PDF catalog under the
+/// `CCAnnot` key. Any previously stored entry is replaced.
+/// Annotations are NOT burned into content streams; they remain fully editable.
+pub fn store_annotations(doc: &mut Document, annotations: &[Annotation]) -> Result<(), String> {
+    let json = serde_json::to_string(annotations).map_err(|e| e.to_string())?;
+    let stream = Stream::new(dictionary! {}, json.into_bytes());
+    let stream_id = doc.add_object(Object::Stream(stream));
+
+    let catalog_id = doc
+        .trailer
+        .get(b"Root")
+        .map_err(|_| "No Root in trailer".to_string())?
+        .as_reference()
+        .map_err(|_| "Root is not a reference".to_string())?;
+
+    let catalog = doc.get_object_mut(catalog_id).map_err(|e| e.to_string())?;
+    if let Object::Dictionary(d) = catalog {
+        d.set("CCAnnot", Object::Reference(stream_id));
+    }
+    Ok(())
+}
+
+/// Read and deserialize annotations from the `CCAnnot` catalog entry.
+/// Returns an empty `Vec` if the file has no stored annotations.
+pub fn load_annotations(doc: &Document) -> Result<Vec<Annotation>, String> {
+    let catalog_id = doc
+        .trailer
+        .get(b"Root")
+        .map_err(|_| "No Root in trailer".to_string())?
+        .as_reference()
+        .map_err(|_| "Root is not a reference".to_string())?;
+
+    let catalog = doc.get_object(catalog_id).map_err(|e| e.to_string())?;
+    let dict = catalog.as_dict().map_err(|e| e.to_string())?;
+
+    let annot_ref = match dict.get(b"CCAnnot") {
+        Ok(Object::Reference(id)) => *id,
+        _ => return Ok(vec![]),
+    };
+
+    let stream_obj = doc.get_object(annot_ref).map_err(|e| e.to_string())?;
+    if let Object::Stream(stream) = stream_obj {
+        let json = String::from_utf8(stream.content.clone()).map_err(|e| e.to_string())?;
+        return serde_json::from_str::<Vec<Annotation>>(&json).map_err(|e| e.to_string());
+    }
+    Err("CCAnnot is not a stream".to_string())
+}
+
 // ── PDF operator builders ─────────────────────────────────────────────────────
 
 /// Append rect stroke operators to `buf`.
