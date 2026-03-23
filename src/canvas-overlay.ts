@@ -1,7 +1,9 @@
 import {
   canvasToPdf,
+  hexToRgb,
   pdfToCanvas,
   rgbToCss,
+  rgbToHex,
   type ActiveToolState,
   type Annotation,
   type CircleAnnotation,
@@ -14,6 +16,16 @@ import {
 type AnnotationCreatedHandler = (ann: Annotation) => void;
 type AnnotationMovedHandler   = (ann: Annotation) => void;
 type AnnotationRemovedHandler = (ann: Annotation) => void;
+type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+const HANDLE_R = 4; // half-size of handle squares in px
+const HANDLE_HIT = 7; // hit radius in px
+const HANDLE_CURSORS: Record<ResizeHandle, string> = {
+  nw: "nw-resize", n: "n-resize",  ne: "ne-resize",
+  e:  "e-resize",  se: "se-resize", s:  "s-resize",
+  sw: "sw-resize", w:  "w-resize",
+};
+const MIN_SIZE_PT = 10; // minimum annotation dimension in PDF pts
 
 export class CanvasOverlay {
   private canvas: HTMLCanvasElement;
@@ -27,13 +39,20 @@ export class CanvasOverlay {
   private startX = 0;
   private startY = 0;
 
-  // ── Select / move state ─────────────────────────────────────────────────────
+  // ── Select / move / resize state ────────────────────────────────────────────
   private selected: Annotation | null = null;
   private dragging = false;
+  private resizing = false;
+  private resizeHandle: ResizeHandle | null = null;
+  /** PDF-coord anchor for the FIXED edge during resize */
+  private resizeAnchorX = 0;
+  private resizeAnchorY = 0;
   private dragTarget: Annotation | null = null;
   private dragOrigX = 0;
   private dragOrigY = 0;
-  private dragOffsetX = 0; // canvas px from click to annotation top-left
+  private dragOrigW = 0;
+  private dragOrigH = 0;
+  private dragOffsetX = 0;
   private dragOffsetY = 0;
 
   // ── Page state ──────────────────────────────────────────────────────────────
@@ -46,46 +65,28 @@ export class CanvasOverlay {
   private movedHandlers:   AnnotationMovedHandler[]   = [];
   private removedHandlers: AnnotationRemovedHandler[] = [];
 
-  /** Annotations already placed on the current page (for redraw). */
   private committed: Annotation[] = [];
 
   constructor(initialStyle: ActiveToolState) {
     this.style = { ...initialStyle };
-    this.canvas = document.getElementById(
-      "annotation-canvas"
-    ) as HTMLCanvasElement;
+    this.canvas = document.getElementById("annotation-canvas") as HTMLCanvasElement;
     this.ctx = this.canvas.getContext("2d")!;
 
     this.canvas.addEventListener("mousedown",  this.onMouseDown);
     this.canvas.addEventListener("mousemove",  this.onMouseMove);
     this.canvas.addEventListener("mouseup",    this.onMouseUp);
     this.canvas.addEventListener("mouseleave", this.onMouseLeave);
+    this.canvas.addEventListener("dblclick",   this.onDblClick);
     window.addEventListener("keydown", this.onKeyDown);
   }
 
-  onAnnotationCreated(handler: AnnotationCreatedHandler): void {
-    this.createdHandlers.push(handler);
-  }
+  onAnnotationCreated(h: AnnotationCreatedHandler): void { this.createdHandlers.push(h); }
+  onAnnotationMoved  (h: AnnotationMovedHandler):   void { this.movedHandlers.push(h); }
+  onAnnotationRemoved(h: AnnotationRemovedHandler): void { this.removedHandlers.push(h); }
 
-  onAnnotationMoved(handler: AnnotationMovedHandler): void {
-    this.movedHandlers.push(handler);
-  }
-
-  onAnnotationRemoved(handler: AnnotationRemovedHandler): void {
-    this.removedHandlers.push(handler);
-  }
-
-  private emit(ann: Annotation): void {
-    this.createdHandlers.forEach(h => h(ann));
-  }
-
-  private emitMoved(ann: Annotation): void {
-    this.movedHandlers.forEach(h => h(ann));
-  }
-
-  private emitRemoved(ann: Annotation): void {
-    this.removedHandlers.forEach(h => h(ann));
-  }
+  private emit       (a: Annotation): void { this.createdHandlers.forEach(h => h(a)); }
+  private emitMoved  (a: Annotation): void { this.movedHandlers.forEach(h => h(a)); }
+  private emitRemoved(a: Annotation): void { this.removedHandlers.forEach(h => h(a)); }
 
   setStyle(style: ActiveToolState): void {
     this.style = { ...style };
@@ -97,37 +98,29 @@ export class CanvasOverlay {
     if (tool !== "select") {
       this.selected = null;
       this.dragging = false;
+      this.resizing = false;
       this.dragTarget = null;
       this.redrawCommitted();
     }
     this.activeTool = tool;
     this.applyPointerEvents(tool);
-
-    if (tool === "text")    this.canvas.style.cursor = "text";
-    else if (tool === "select")    this.canvas.style.cursor = "default";
+    if (tool === "text")         this.canvas.style.cursor = "text";
+    else if (tool === "select")  this.canvas.style.cursor = "default";
     else if (tool !== "signature") this.canvas.style.cursor = "crosshair";
-    else                           this.canvas.style.cursor = "";
+    else                         this.canvas.style.cursor = "";
   }
 
   private applyPointerEvents(tool: ToolKind): void {
-    // Signature uses viewer-container click handler (canvas must be transparent)
     this.canvas.style.pointerEvents = tool !== "signature" ? "auto" : "none";
   }
 
-  /** Call after each page render to sync canvas size and stored annotations. */
-  syncToPage(
-    page: number,
-    scale: number,
-    pageHeightPt: number,
-    annotations: Annotation[]
-  ): void {
-    this.currentPage = page;
-    this.scale = scale;
+  syncToPage(page: number, scale: number, pageHeightPt: number, annotations: Annotation[]): void {
+    this.currentPage  = page;
+    this.scale        = scale;
     this.pageHeightPt = pageHeightPt;
-
-    // Deselect when changing pages
     this.selected = null;
     this.dragging = false;
+    this.resizing = false;
     this.dragTarget = null;
 
     const pdfCanvas = document.getElementById("pdf-canvas") as HTMLCanvasElement;
@@ -140,63 +133,149 @@ export class CanvasOverlay {
     this.redrawCommitted();
   }
 
-  // ── Bounding box helper ──────────────────────────────────────────────────────
+  // ── Bounding box ─────────────────────────────────────────────────────────────
 
   private getAnnBounds(ann: Annotation): { left: number; top: number; right: number; bottom: number } {
     const { scale, pageHeightPt } = this;
     const left   = ann.x * scale;
     const right  = (ann.x + ann.width) * scale;
     const bottom = (pageHeightPt - ann.y) * scale;
-
-    if (ann.kind === "text") {
-      const top = bottom - ann.fontSize * scale * 1.5;
-      return { left, top, right, bottom };
-    }
-
-    const top = (pageHeightPt - (ann.y + ann.height)) * scale;
+    const top    = ann.kind === "text"
+      ? bottom - ann.fontSize * scale * 1.5
+      : (pageHeightPt - (ann.y + ann.height)) * scale;
     return { left, top, right, bottom };
   }
 
   private hitTest(cx: number, cy: number): Annotation | null {
-    const PAD = 5; // extra px to make small annotations easier to grab
+    const P = 5;
     for (let i = this.committed.length - 1; i >= 0; i--) {
       const b = this.getAnnBounds(this.committed[i]);
-      if (cx >= b.left - PAD && cx <= b.right  + PAD &&
-          cy >= b.top  - PAD && cy <= b.bottom + PAD) {
-        return this.committed[i];
-      }
+      if (cx >= b.left - P && cx <= b.right  + P &&
+          cy >= b.top  - P && cy <= b.bottom + P) return this.committed[i];
     }
     return null;
+  }
+
+  // ── Resize handles ───────────────────────────────────────────────────────────
+
+  /** Returns canvas-px positions of all handles for a selection box. */
+  private handlePositions(b: { left: number; top: number; right: number; bottom: number }): Record<ResizeHandle, { x: number; y: number }> {
+    const mx = (b.left + b.right)  / 2;
+    const my = (b.top  + b.bottom) / 2;
+    return {
+      nw: { x: b.left,  y: b.top    }, n: { x: mx,     y: b.top    }, ne: { x: b.right, y: b.top    },
+      e:  { x: b.right, y: my       },                                  w: { x: b.left,  y: my       },
+      sw: { x: b.left,  y: b.bottom }, s: { x: mx,     y: b.bottom }, se: { x: b.right, y: b.bottom },
+    };
+  }
+
+  private handlesFor(ann: Annotation): ResizeHandle[] {
+    return ann.kind === "text"
+      ? ["w", "e"]
+      : ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+  }
+
+  private hitHandle(cx: number, cy: number, ann: Annotation): ResizeHandle | null {
+    const SEL_PAD = 5;
+    const b = this.getAnnBounds(ann);
+    const box = { left: b.left - SEL_PAD, top: b.top - SEL_PAD, right: b.right + SEL_PAD, bottom: b.bottom + SEL_PAD };
+    const positions = this.handlePositions(box);
+    for (const h of this.handlesFor(ann)) {
+      const p = positions[h];
+      if (Math.abs(cx - p.x) <= HANDLE_HIT && Math.abs(cy - p.y) <= HANDLE_HIT) return h;
+    }
+    return null;
+  }
+
+  /** Compute fixed-edge anchors in PDF pts for the given handle. */
+  private startResize(ann: Annotation, handle: ResizeHandle): void {
+    this.resizing      = true;
+    this.resizeHandle  = handle;
+    this.dragTarget    = ann;
+    this.dragOrigX     = ann.x;
+    this.dragOrigY     = ann.y;
+    this.dragOrigW     = ann.width;
+    this.dragOrigH     = ann.kind !== "text" ? ann.height : 0;
+
+    // anchorX = the FIXED x edge (left or right) in PDF pts
+    // anchorY = the FIXED y edge (top or bottom) in PDF pts
+    const left   = ann.x;
+    const right  = ann.x + ann.width;
+    const bottom = ann.y;
+    const top    = ann.kind !== "text" ? ann.y + ann.height : ann.y;
+
+    // Which x edge is fixed?
+    if (["e", "ne", "se"].includes(handle)) this.resizeAnchorX = left;   // left is fixed, right moves
+    else if (["w", "nw", "sw"].includes(handle)) this.resizeAnchorX = right;  // right is fixed, left moves
+    // n/s: anchorX irrelevant
+
+    // Which y edge is fixed?
+    if (["n", "ne", "nw"].includes(handle)) this.resizeAnchorY = bottom; // bottom is fixed, top moves
+    else if (["s", "se", "sw"].includes(handle)) this.resizeAnchorY = top;    // top is fixed, bottom moves
+    // e/w: anchorY irrelevant
+  }
+
+  private applyResize(mouseX: number, mouseY: number): void {
+    const ann = this.dragTarget!;
+    const h   = this.resizeHandle!;
+    const mx  = mouseX / this.scale;
+    const my  = this.pageHeightPt - mouseY / this.scale;
+    const M   = MIN_SIZE_PT;
+
+    if (h === "e" || h === "ne" || h === "se") {
+      ann.width = Math.max(M, mx - this.resizeAnchorX);
+    }
+    if (h === "w" || h === "nw" || h === "sw") {
+      const newLeft = Math.min(this.resizeAnchorX - M, mx);
+      ann.width = this.resizeAnchorX - newLeft;
+      ann.x = newLeft;
+    }
+    if (ann.kind !== "text") {
+      if (h === "n" || h === "ne" || h === "nw") {
+        ann.height = Math.max(M, my - this.resizeAnchorY);
+      }
+      if (h === "s" || h === "se" || h === "sw") {
+        const newBottom = Math.min(this.resizeAnchorY - M, my);
+        ann.y      = newBottom;
+        ann.height = this.resizeAnchorY - newBottom;
+      }
+    }
   }
 
   // ── Redraw ───────────────────────────────────────────────────────────────────
 
   redrawCommitted(): void {
-    const { width, height } = this.canvas;
-    this.ctx.clearRect(0, 0, width, height);
-    for (const ann of this.committed) {
-      this.drawAnnotation(ann);
-    }
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    for (const ann of this.committed) this.drawAnnotation(ann);
     if (this.selected && this.committed.includes(this.selected)) {
       this.drawSelectionBox(this.selected);
     }
   }
 
   private drawSelectionBox(ann: Annotation): void {
+    const SEL_PAD = 5;
     const b = this.getAnnBounds(ann);
-    const pad = 5;
+    const box = { left: b.left - SEL_PAD, top: b.top - SEL_PAD, right: b.right + SEL_PAD, bottom: b.bottom + SEL_PAD };
+
     this.ctx.strokeStyle = "#4d9eff";
-    this.ctx.lineWidth = 1.5;
+    this.ctx.lineWidth   = 1.5;
     this.ctx.setLineDash([5, 3]);
-    this.ctx.strokeRect(
-      b.left  - pad, b.top  - pad,
-      b.right - b.left + pad * 2,
-      b.bottom - b.top + pad * 2
-    );
+    this.ctx.strokeRect(box.left, box.top, box.right - box.left, box.bottom - box.top);
     this.ctx.setLineDash([]);
+
+    // Draw resize handles
+    const positions = this.handlePositions(box);
+    this.ctx.fillStyle   = "#fff";
+    this.ctx.strokeStyle = "#4d9eff";
+    this.ctx.lineWidth   = 1;
+    for (const h of this.handlesFor(ann)) {
+      const { x, y } = positions[h];
+      this.ctx.fillRect  (x - HANDLE_R, y - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+      this.ctx.strokeRect(x - HANDLE_R, y - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+    }
   }
 
-  // ── Annotation preview drawing ───────────────────────────────────────────────
+  // ── Annotation drawing ───────────────────────────────────────────────────────
 
   private drawAnnotation(ann: Annotation): void {
     const ctx = this.ctx;
@@ -205,38 +284,30 @@ export class CanvasOverlay {
     if (ann.kind === "rect") {
       const { x, y } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
       ctx.strokeStyle = rgbToCss(ann.color);
-      ctx.lineWidth = ann.strokeWidth;
+      ctx.lineWidth   = ann.strokeWidth;
       ctx.strokeRect(x, y - ann.height * scale, ann.width * scale, ann.height * scale);
 
     } else if (ann.kind === "circle") {
-      const cx = pdfToCanvas(ann.x + ann.width / 2, ann.y + ann.height / 2, scale, pageHeightPt);
+      const c = pdfToCanvas(ann.x + ann.width / 2, ann.y + ann.height / 2, scale, pageHeightPt);
       ctx.strokeStyle = rgbToCss(ann.color);
-      ctx.lineWidth = ann.strokeWidth;
+      ctx.lineWidth   = ann.strokeWidth;
       ctx.beginPath();
-      ctx.ellipse(cx.x, cx.y, (ann.width / 2) * scale, (ann.height / 2) * scale, 0, 0, Math.PI * 2);
+      ctx.ellipse(c.x, c.y, (ann.width / 2) * scale, (ann.height / 2) * scale, 0, 0, Math.PI * 2);
       ctx.stroke();
 
     } else if (ann.kind === "text") {
       const { x, y } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
       ctx.fillStyle = rgbToCss(ann.color);
-      const weight = ann.bold   ? "bold"   : "normal";
-      const style  = ann.italic ? "italic" : "normal";
-      ctx.font = `${style} ${weight} ${ann.fontSize * scale}px Helvetica, Arial, sans-serif`;
+      ctx.font      = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "normal"} ${ann.fontSize * scale}px Helvetica, Arial, sans-serif`;
       ctx.textAlign = ann.alignment as CanvasTextAlign;
-      const tx =
-        ann.alignment === "left"  ? x :
-        ann.alignment === "right" ? x + ann.width * scale :
-                                    x + (ann.width * scale) / 2;
+      const tx = ann.alignment === "left" ? x : ann.alignment === "right" ? x + ann.width * scale : x + (ann.width * scale) / 2;
       ctx.fillText(ann.content, tx, y);
       if (ann.underline) {
-        const w = ctx.measureText(ann.content).width;
-        const ulY = y + ann.fontSize * scale * 0.12;
+        const w     = ctx.measureText(ann.content).width;
+        const ulY   = y + ann.fontSize * scale * 0.12;
+        const startX = ann.alignment === "left" ? x : ann.alignment === "right" ? tx - w : tx - w / 2;
         ctx.strokeStyle = rgbToCss(ann.color);
-        ctx.lineWidth = 1;
-        const startX =
-          ann.alignment === "left"  ? x :
-          ann.alignment === "right" ? tx - w :
-                                      tx - w / 2;
+        ctx.lineWidth   = 1;
         ctx.beginPath();
         ctx.moveTo(startX, ulY);
         ctx.lineTo(startX + w, ulY);
@@ -246,9 +317,7 @@ export class CanvasOverlay {
     } else if (ann.kind === "signature") {
       const { x, y } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
       const img = new Image();
-      img.onload = () => {
-        this.ctx.drawImage(img, x, y - ann.height * scale, ann.width * scale, ann.height * scale);
-      };
+      img.onload = () => this.ctx.drawImage(img, x, y - ann.height * scale, ann.width * scale, ann.height * scale);
       img.src = `data:image/png;base64,${ann.imageData}`;
     }
   }
@@ -260,10 +329,8 @@ export class CanvasOverlay {
     const y0 = Math.min(this.startY, curY);
     const w  = Math.abs(curX - this.startX);
     const h  = Math.abs(curY - this.startY);
-
     ctx.strokeStyle = rgbToCss(this.style.color);
-    ctx.lineWidth = this.style.strokeWidth;
-
+    ctx.lineWidth   = this.style.strokeWidth;
     if (this.activeTool === "rect") {
       ctx.setLineDash([4, 3]);
       ctx.strokeRect(x0, y0, w, h);
@@ -283,16 +350,28 @@ export class CanvasOverlay {
     if (this.activeTool === "signature") return;
 
     if (this.activeTool === "select") {
+      // 1. Check resize handle on selected annotation first
+      if (this.selected) {
+        const h = this.hitHandle(e.offsetX, e.offsetY, this.selected);
+        if (h) {
+          this.startResize(this.selected, h);
+          this.canvas.style.cursor = HANDLE_CURSORS[h];
+          return;
+        }
+      }
+      // 2. Check for annotation hit (drag/select)
       const hit = this.hitTest(e.offsetX, e.offsetY);
       this.selected = hit;
       if (hit) {
         const bounds = this.getAnnBounds(hit);
-        this.dragging     = true;
-        this.dragTarget   = hit;
-        this.dragOrigX    = hit.x;
-        this.dragOrigY    = hit.y;
-        this.dragOffsetX  = e.offsetX - bounds.left;
-        this.dragOffsetY  = e.offsetY - bounds.top;
+        this.dragging    = true;
+        this.dragTarget  = hit;
+        this.dragOrigX   = hit.x;
+        this.dragOrigY   = hit.y;
+        this.dragOrigW   = hit.width;
+        this.dragOrigH   = hit.kind !== "text" ? hit.height : 0;
+        this.dragOffsetX = e.offsetX - bounds.left;
+        this.dragOffsetY = e.offsetY - bounds.top;
         this.canvas.style.cursor = "grabbing";
       }
       this.redrawCommitted();
@@ -311,24 +390,29 @@ export class CanvasOverlay {
 
   private onMouseMove = (e: MouseEvent): void => {
     if (this.activeTool === "select") {
+      if (this.resizing && this.dragTarget) {
+        this.applyResize(e.offsetX, e.offsetY);
+        this.redrawCommitted();
+        return;
+      }
       if (this.dragging && this.dragTarget) {
         const newLeft = e.offsetX - this.dragOffsetX;
         const newTop  = e.offsetY - this.dragOffsetY;
         this.dragTarget.x = newLeft / this.scale;
         if (this.dragTarget.kind === "text") {
-          this.dragTarget.y = this.pageHeightPt
-            - (newTop / this.scale)
-            - this.dragTarget.fontSize * 1.5;
+          this.dragTarget.y = this.pageHeightPt - newTop / this.scale - this.dragTarget.fontSize * 1.5;
         } else {
-          this.dragTarget.y = this.pageHeightPt
-            - newTop / this.scale
-            - this.dragTarget.height;
+          this.dragTarget.y = this.pageHeightPt - newTop / this.scale - this.dragTarget.height;
         }
         this.redrawCommitted();
-      } else {
-        const hit = this.hitTest(e.offsetX, e.offsetY);
-        this.canvas.style.cursor = hit ? "grab" : "default";
+        return;
       }
+      // Hover: check handle cursor, then grab cursor
+      if (this.selected) {
+        const h = this.hitHandle(e.offsetX, e.offsetY, this.selected);
+        if (h) { this.canvas.style.cursor = HANDLE_CURSORS[h]; return; }
+      }
+      this.canvas.style.cursor = this.hitTest(e.offsetX, e.offsetY) ? "grab" : "default";
       return;
     }
 
@@ -338,14 +422,21 @@ export class CanvasOverlay {
 
   private onMouseUp = (e: MouseEvent): void => {
     if (this.activeTool === "select") {
+      if (this.resizing && this.dragTarget) {
+        this.emitMoved(this.dragTarget);
+        this.resizing     = false;
+        this.resizeHandle = null;
+        this.dragTarget   = null;
+        this.canvas.style.cursor = "default";
+        return;
+      }
       if (this.dragging && this.dragTarget) {
-        const moved = this.dragTarget.x !== this.dragOrigX ||
-                      this.dragTarget.y !== this.dragOrigY;
+        const moved = this.dragTarget.x !== this.dragOrigX || this.dragTarget.y !== this.dragOrigY;
         if (moved) this.emitMoved(this.dragTarget);
+        this.dragging   = false;
+        this.dragTarget = null;
         this.canvas.style.cursor = "grab";
       }
-      this.dragging   = false;
-      this.dragTarget = null;
       return;
     }
 
@@ -356,40 +447,25 @@ export class CanvasOverlay {
     const y0 = Math.min(this.startY, e.offsetY);
     const w  = Math.abs(e.offsetX - this.startX);
     const h  = Math.abs(e.offsetY - this.startY);
-
-    if (w < 4 || h < 4) {
-      this.redrawCommitted();
-      return;
-    }
+    if (w < 4 || h < 4) { this.redrawCommitted(); return; }
 
     const pdfTL = canvasToPdf(x0,     y0,     this.scale, this.pageHeightPt);
     const pdfBR = canvasToPdf(x0 + w, y0 + h, this.scale, this.pageHeightPt);
-    const pdfX  = pdfTL.x;
-    const pdfY  = pdfBR.y;
-    const pdfW  = pdfBR.x - pdfTL.x;
-    const pdfH  = pdfTL.y - pdfBR.y;
 
     if (this.activeTool === "rect") {
       const ann: RectAnnotation = {
-        kind: "rect",
-        page: this.currentPage,
-        x: pdfX, y: pdfY,
-        width: pdfW, height: pdfH,
-        color: { ...this.style.color },
-        strokeWidth: this.style.strokeWidth,
+        kind: "rect", page: this.currentPage,
+        x: pdfTL.x, y: pdfBR.y, width: pdfBR.x - pdfTL.x, height: pdfTL.y - pdfBR.y,
+        color: { ...this.style.color }, strokeWidth: this.style.strokeWidth,
       };
       this.committed.push(ann);
       this.redrawCommitted();
       this.emit(ann);
-
     } else if (this.activeTool === "circle") {
       const ann: CircleAnnotation = {
-        kind: "circle",
-        page: this.currentPage,
-        x: pdfX, y: pdfY,
-        width: pdfW, height: pdfH,
-        color: { ...this.style.color },
-        strokeWidth: this.style.strokeWidth,
+        kind: "circle", page: this.currentPage,
+        x: pdfTL.x, y: pdfBR.y, width: pdfBR.x - pdfTL.x, height: pdfTL.y - pdfBR.y,
+        color: { ...this.style.color }, strokeWidth: this.style.strokeWidth,
       };
       this.committed.push(ann);
       this.redrawCommitted();
@@ -398,12 +474,16 @@ export class CanvasOverlay {
   };
 
   private onMouseLeave = (): void => {
-    if (this.dragging && this.dragTarget) {
-      // Restore original position on cancel
-      this.dragTarget.x = this.dragOrigX;
-      this.dragTarget.y = this.dragOrigY;
-      this.dragging   = false;
-      this.dragTarget = null;
+    if ((this.resizing || this.dragging) && this.dragTarget) {
+      // Restore original geometry
+      this.dragTarget.x     = this.dragOrigX;
+      this.dragTarget.y     = this.dragOrigY;
+      this.dragTarget.width = this.dragOrigW;
+      if (this.dragTarget.kind !== "text") this.dragTarget.height = this.dragOrigH;
+      this.resizing     = false;
+      this.resizeHandle = null;
+      this.dragging     = false;
+      this.dragTarget   = null;
       this.redrawCommitted();
       return;
     }
@@ -425,89 +505,113 @@ export class CanvasOverlay {
     }
   };
 
-  // ── Text tool ─────────────────────────────────────────────────────────────────
+  // ── Double-click edit ─────────────────────────────────────────────────────────
 
-  private handleTextClick(canvasX: number, canvasY: number): void {
+  private onDblClick = (e: MouseEvent): void => {
+    if (this.activeTool !== "select") return;
+    const hit = this.hitTest(e.offsetX, e.offsetY);
+    if (!hit) return;
+    e.preventDefault();
+    if (hit.kind === "text") this.handleTextEdit(hit);
+    else if (hit.kind === "rect" || hit.kind === "circle") this.handleShapeEdit(hit, e.offsetX, e.offsetY);
+  };
+
+  private handleTextEdit(ann: TextAnnotation): void {
     const container = document.getElementById("viewer-container")!;
+    const { scale, pageHeightPt } = this;
+    const { x: canvasX, y: canvasY } = pdfToCanvas(ann.x, ann.y, scale, pageHeightPt);
 
     const input = document.createElement("div");
     input.contentEditable = "true";
+    input.textContent = ann.content;
     input.style.cssText = `
       position: absolute;
-      left: ${canvasX}px;
-      top: ${canvasY - this.style.fontSize * this.scale}px;
-      min-width: 80px;
-      max-width: ${this.canvas.width - canvasX}px;
-      font-size: ${this.style.fontSize * this.scale}px;
-      font-family: Helvetica, Arial, sans-serif;
-      font-weight: ${this.style.bold ? "bold" : "normal"};
-      font-style: ${this.style.italic ? "italic" : "normal"};
-      text-decoration: ${this.style.underline ? "underline" : "none"};
-      color: ${rgbToCss(this.style.color)};
-      outline: 1px dashed #aaa;
-      background: transparent;
-      padding: 1px 2px;
-      white-space: pre;
-      z-index: 10;
+      left: ${canvasX}px; top: ${canvasY - ann.fontSize * scale}px;
+      min-width: 80px; max-width: ${this.canvas.width - canvasX}px;
+      font-size: ${ann.fontSize * scale}px; font-family: Helvetica, Arial, sans-serif;
+      font-weight: ${ann.bold ? "bold" : "normal"};
+      font-style: ${ann.italic ? "italic" : "normal"};
+      text-decoration: ${ann.underline ? "underline" : "none"};
+      color: ${rgbToCss(ann.color)};
+      outline: 1px dashed #aaa; background: transparent;
+      padding: 1px 2px; white-space: pre; z-index: 10;
     `;
-
     const commit = (): void => {
       const content = input.textContent?.trim() ?? "";
-      if (content) {
-        const approxWidth = (content.length * this.style.fontSize * 0.55) / this.scale;
-        const pdfCoords = canvasToPdf(canvasX, canvasY, this.scale, this.pageHeightPt);
-        const ann: TextAnnotation = {
-          kind: "text",
-          page: this.currentPage,
-          x: pdfCoords.x,
-          y: pdfCoords.y,
-          width: approxWidth + 10,
-          content,
-          color: { ...this.style.color },
-          fontSize: this.style.fontSize,
-          bold: this.style.bold,
-          italic: this.style.italic,
-          underline: this.style.underline,
-          alignment: this.style.alignment,
-        };
-        this.committed.push(ann);
-        this.redrawCommitted();
-        this.emit(ann);
-      }
       input.remove();
-    };
-
-    input.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        commit();
-      } else if (e.key === "Escape") {
-        input.remove();
+      if (content && content !== ann.content) {
+        ann.content = content;
+        ann.width   = content.length * ann.fontSize * 0.55 + 10;
+        this.emitMoved(ann);
       }
+      this.redrawCommitted();
+    };
+    input.addEventListener("keydown", (ev: KeyboardEvent) => {
+      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); commit(); }
+      else if (ev.key === "Escape")            { input.remove(); this.redrawCommitted(); }
     });
     input.addEventListener("blur", commit, { once: true });
-
     container.appendChild(input);
     input.focus();
+    const range = document.createRange();
+    range.selectNodeContents(input);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+  }
+
+  private handleShapeEdit(ann: RectAnnotation | CircleAnnotation, cx: number, cy: number): void {
+    const container = document.getElementById("viewer-container")!;
+    const pop = document.createElement("div");
+    pop.style.cssText = `
+      position: absolute; left: ${cx + 10}px; top: ${cy + 10}px;
+      background: #2a2a2a; border: 1px solid #555; border-radius: 6px;
+      padding: 8px; display: flex; gap: 8px; align-items: center;
+      z-index: 20; box-shadow: 0 2px 10px rgba(0,0,0,.6);
+    `;
+    const colorInput = document.createElement("input");
+    colorInput.type  = "color";
+    colorInput.value = rgbToHex(ann.color);
+    colorInput.title = "Stroke colour";
+    colorInput.style.cssText = "width:32px;height:24px;border:none;padding:0;cursor:pointer;background:none;";
+
+    const strokeLabel = document.createElement("span");
+    strokeLabel.textContent = "w:";
+    strokeLabel.style.cssText = "color:#ccc;font-size:12px;";
+    const strokeInput = document.createElement("input");
+    strokeInput.type  = "number";
+    strokeInput.value = String(ann.strokeWidth);
+    strokeInput.min = "0.5"; strokeInput.max = "20"; strokeInput.step = "0.5";
+    strokeInput.style.cssText = "width:44px;background:#1e1e1e;color:#e8e8e8;border:1px solid #555;border-radius:3px;padding:2px 4px;font-size:12px;";
+
+    const apply = (): void => {
+      ann.color = hexToRgb(colorInput.value);
+      const sw = parseFloat(strokeInput.value);
+      if (!isNaN(sw) && sw > 0) ann.strokeWidth = sw;
+      this.redrawCommitted();
+      this.emitMoved(ann);
+    };
+    colorInput.addEventListener("input", apply);
+    strokeInput.addEventListener("change", apply);
+
+    const dismiss = (ev: MouseEvent): void => {
+      if (!pop.contains(ev.target as Node)) {
+        pop.remove();
+        document.removeEventListener("mousedown", dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener("mousedown", dismiss), 0);
+    pop.append(colorInput, strokeLabel, strokeInput);
+    container.appendChild(pop);
+    colorInput.focus();
   }
 
   /** Place a signature image on the current page at canvas coordinates. */
-  placeSignature(
-    canvasX: number,
-    canvasY: number,
-    imageData: string,
-    widthPt: number,
-    heightPt: number
-  ): SignatureAnnotation {
+  placeSignature(canvasX: number, canvasY: number, imageData: string, widthPt: number, heightPt: number): SignatureAnnotation {
     const pdfCoords = canvasToPdf(canvasX, canvasY, this.scale, this.pageHeightPt);
     const ann: SignatureAnnotation = {
-      kind: "signature",
-      page: this.currentPage,
-      x: pdfCoords.x,
-      y: pdfCoords.y - heightPt,
-      width: widthPt,
-      height: heightPt,
-      imageData,
+      kind: "signature", page: this.currentPage,
+      x: pdfCoords.x, y: pdfCoords.y - heightPt,
+      width: widthPt, height: heightPt, imageData,
     };
     this.committed.push(ann);
     this.redrawCommitted();
