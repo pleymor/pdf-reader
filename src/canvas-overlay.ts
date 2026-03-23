@@ -143,11 +143,10 @@ export class CanvasOverlay {
     let top: number, bottom: number;
     if (ann.kind === "text") {
       // ann.y is the text baseline = boxTop + 2px padding + fontSize
-      // so boxTop = canvasY - 2 - fontSize_px
+      const lineH     = ann.fontSize * scale * 1.2;
+      const lineCount = this.textLineCount(ann);
       top    = canvasY - 2 - ann.fontSize * scale;
-      bottom = ann.height !== undefined
-        ? top + ann.height * scale
-        : canvasY + ann.fontSize * scale * 0.3; // approximate descender space
+      bottom = top + lineCount * lineH + 4; // +4 for top+bottom padding
     } else {
       top    = (pageHeightPt - (ann.y + ann.height)) * scale;
       bottom = canvasY;
@@ -207,21 +206,17 @@ export class CanvasOverlay {
     this.dragOrigH     = ann.kind !== "text" ? ann.height : 0;
 
     // anchorX = the FIXED x edge (left or right) in PDF pts
-    // anchorY = the FIXED y edge (top or bottom) in PDF pts
     const left   = ann.x;
     const right  = ann.x + ann.width;
     const bottom = ann.y;
     const top    = ann.kind !== "text" ? ann.y + ann.height : ann.y;
 
-    // Which x edge is fixed?
-    if (["e", "ne", "se"].includes(handle)) this.resizeAnchorX = left;   // left is fixed, right moves
-    else if (["w", "nw", "sw"].includes(handle)) this.resizeAnchorX = right;  // right is fixed, left moves
-    // n/s: anchorX irrelevant
+    if (["e", "ne", "se"].includes(handle)) this.resizeAnchorX = left;
+    else if (["w", "nw", "sw"].includes(handle)) this.resizeAnchorX = right;
 
-    // Which y edge is fixed?
-    if (["n", "ne", "nw"].includes(handle)) this.resizeAnchorY = bottom; // bottom is fixed, top moves
-    else if (["s", "se", "sw"].includes(handle)) this.resizeAnchorY = top;    // top is fixed, bottom moves
-    // e/w: anchorY irrelevant
+    // anchorY = the FIXED y edge (top or bottom) in PDF pts
+    if (["n", "ne", "nw"].includes(handle)) this.resizeAnchorY = bottom;
+    else if (["s", "se", "sw"].includes(handle)) this.resizeAnchorY = top;
   }
 
   private applyResize(mouseX: number, mouseY: number): void {
@@ -285,6 +280,16 @@ export class CanvasOverlay {
   }
 
   // ── Annotation drawing ───────────────────────────────────────────────────────
+
+  /** Compute the number of rendered lines for a text annotation (accounts for word-wrap). */
+  private textLineCount(ann: TextAnnotation): number {
+    const { scale } = this;
+    const saved = this.ctx.font;
+    this.ctx.font = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "normal"} ${ann.fontSize * scale}px Helvetica, Arial, sans-serif`;
+    const count = this.wrapLines(this.ctx, ann.content, ann.width * scale).length;
+    this.ctx.font = saved;
+    return count;
+  }
 
   /** Split text on explicit newlines then word-wrap each paragraph to maxWidth. */
   private wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
@@ -377,7 +382,8 @@ export class CanvasOverlay {
     } else if (this.activeTool === "text") {
       ctx.strokeStyle = "#aaaaaa";
       ctx.lineWidth   = 1;
-      ctx.strokeRect(x0, y0, w, h);
+      const lineH = this.style.fontSize * this.scale * 1.4;
+      ctx.strokeRect(x0, y0, w, lineH);
     }
     ctx.setLineDash([]);
   }
@@ -490,16 +496,14 @@ export class CanvasOverlay {
     const h  = Math.abs(e.offsetY - this.startY);
     if (this.activeTool === "text") {
       this.redrawCommitted();
-      const isDrag = w >= 8 && h >= 8;
+      const isDrag = w >= 8;
       if (isDrag) {
-        // Open input sized to the drawn box
-        this.openTextInput(x0, y0, w, h);
+        this.openTextInput(x0, y0, w);
       } else {
-        // Single click: default width, no fixed height
         this.openTextInput(
           this.startX,
           this.startY - this.style.fontSize * this.scale,
-          0, 0
+          0
         );
       }
       return;
@@ -566,24 +570,21 @@ export class CanvasOverlay {
   // ── Text placement ───────────────────────────────────────────────────────────
 
   /**
-   * @param left     canvas-px left edge of the text box
-   * @param top      canvas-px top edge of the text box
-   * @param widthPx  drawn width in canvas-px; 0 = auto (default size)
-   * @param heightPx drawn height in canvas-px; 0 = auto (grows with content)
+   * @param left    canvas-px left edge of the text box
+   * @param top     canvas-px top edge of the text box
+   * @param widthPx drawn width in canvas-px; 0 = auto (default size)
    */
-  private openTextInput(left: number, top: number, widthPx: number, heightPx: number): void {
+  private openTextInput(left: number, top: number, widthPx: number): void {
     const container = document.getElementById("viewer-container")!;
     const fontSize  = this.style.fontSize * this.scale;
     const hasWidth  = widthPx > 0;
-    const hasHeight = heightPx > 0;
 
     const input = document.createElement("div");
     input.contentEditable = "true";
     input.style.cssText = `
       position: absolute;
       left: ${left}px; top: ${top}px;
-      ${hasWidth  ? `width: ${widthPx}px;`  : "min-width: 120px;"}
-      ${hasHeight ? `height: ${heightPx}px; overflow-y: hidden;` : ""}
+      ${hasWidth ? `width: ${widthPx}px;` : "min-width: 120px;"}
       font-size: ${fontSize}px; line-height: 1.2; font-family: Helvetica, Arial, sans-serif;
       font-weight: ${this.style.bold ? "bold" : "normal"};
       font-style: ${this.style.italic ? "italic" : "normal"};
@@ -603,15 +604,13 @@ export class CanvasOverlay {
         // baseline = top of box + top padding (2px) + font size
         const baselineCanvasY = top + 2 + fontSize;
         const pdfCoords = canvasToPdf(left, baselineCanvasY, this.scale, this.pageHeightPt);
-        const annWidth  = hasWidth
+        const annWidth = hasWidth
           ? widthPx / this.scale
           : content.length * this.style.fontSize * 0.55 + 10;
-        const annHeight = hasHeight ? heightPx / this.scale : undefined;
         const ann: TextAnnotation = {
           kind: "text", page: this.currentPage,
           x: pdfCoords.x, y: pdfCoords.y,
           width: annWidth,
-          ...(annHeight !== undefined && { height: annHeight }),
           content,
           color: { ...this.style.color },
           fontSize: this.style.fontSize,
@@ -658,9 +657,8 @@ export class CanvasOverlay {
     const canvasX = ann.x * scale;
     const canvasY = (pageHeightPt - ann.y) * scale; // baseline
     // boxTop = baseline - 2px padding - fontSize (mirrors openTextInput commit logic)
-    const boxTop   = canvasY - 2 - ann.fontSize * scale;
-    const boxW     = ann.width  * scale;
-    const boxH     = ann.height !== undefined ? ann.height * scale : 0;
+    const boxTop = canvasY - 2 - ann.fontSize * scale;
+    const boxW   = ann.width * scale;
 
     // Hide the canvas rendering while the edit div is visible
     const idx = this.committed.indexOf(ann);
@@ -679,7 +677,6 @@ export class CanvasOverlay {
       position: absolute;
       left: ${canvasX}px; top: ${boxTop}px;
       width: ${boxW}px;
-      ${boxH > 0 ? `height: ${boxH}px; overflow-y: hidden;` : ""}
       font-size: ${ann.fontSize * scale}px; line-height: 1.2; font-family: Helvetica, Arial, sans-serif;
       font-weight: ${ann.bold ? "bold" : "normal"};
       font-style: ${ann.italic ? "italic" : "normal"};
@@ -697,10 +694,6 @@ export class CanvasOverlay {
       restore();
       if (content && content !== ann.content) {
         ann.content = content;
-        // Only auto-size width if there was no explicit drawn width
-        if (ann.height === undefined) {
-          ann.width = content.length * ann.fontSize * 0.55 + 10;
-        }
         this.emitMoved(ann);
       }
       this.redrawCommitted();

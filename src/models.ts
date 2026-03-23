@@ -55,10 +55,8 @@ export type TextAlignmentValue = "left" | "center" | "right";
 
 export interface TextAnnotation extends BaseAnnotation {
   kind: "text";
-  /** Bounding box width in PDF points (used for alignment) */
+  /** Bounding box width in PDF points (used for alignment and word-wrap) */
   width: number;
-  /** Explicit box height in PDF points; undefined = auto (one line) */
-  height?: number;
   content: string;
   color: RgbColor;
   fontSize: number;
