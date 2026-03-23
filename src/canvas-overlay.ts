@@ -640,6 +640,16 @@ export class CanvasOverlay {
     const boxW     = ann.width  * scale;
     const boxH     = ann.height !== undefined ? ann.height * scale : 0;
 
+    // Hide the canvas rendering while the edit div is visible
+    const idx = this.committed.indexOf(ann);
+    if (idx !== -1) this.committed.splice(idx, 1);
+    this.selected = null;
+    this.redrawCommitted();
+
+    const restore = (): void => {
+      if (idx !== -1) this.committed.splice(idx, 0, ann);
+    };
+
     const input = document.createElement("div");
     input.contentEditable = "true";
     input.textContent = ann.content;
@@ -662,6 +672,7 @@ export class CanvasOverlay {
       const content = input.textContent?.trim() ?? "";
       input.remove();
       document.removeEventListener("mousedown", outsideClick, true);
+      restore();
       if (content && content !== ann.content) {
         ann.content = content;
         // Only auto-size width if there was no explicit drawn width
@@ -677,7 +688,12 @@ export class CanvasOverlay {
     };
     input.addEventListener("keydown", (ev: KeyboardEvent) => {
       if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); commit(); }
-      else if (ev.key === "Escape") { input.remove(); document.removeEventListener("mousedown", outsideClick, true); this.redrawCommitted(); }
+      else if (ev.key === "Escape") {
+        input.remove();
+        document.removeEventListener("mousedown", outsideClick, true);
+        restore();
+        this.redrawCommitted();
+      }
     });
     container.appendChild(input);
     input.focus();
