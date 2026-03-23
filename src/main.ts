@@ -121,7 +121,17 @@ async function saveFile(forceDialog: boolean): Promise<void> {
 
   try {
     await saveAnnotatedPdf(filePath, target, store.getAll());
+    filePath = target; // subsequent saves use the saved file (stream IDs live there)
     setDirty(false);
+
+    // Reload the PDF canvas from the saved file so the freshly burned annotations
+    // are shown by pdf.js. Then mark everything burned so the overlay doesn't double.
+    const savedPage = viewer.currentPage;
+    await viewer.load(target);
+    if (savedPage !== 1) await viewer.goToPage(savedPage);
+    await renderCurrentPage();
+    overlay.markBurned(store.getAll());
+
     showToast("Saved.");
   } catch (err: unknown) {
     showToast(`Save failed: ${err}`, true);
