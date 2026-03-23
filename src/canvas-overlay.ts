@@ -325,17 +325,34 @@ export class CanvasOverlay {
 
     // Paint a white cover over each old burned position so the stale PDF-canvas
     // rendering is hidden while the annotation is being edited/moved.
+    // Collect cover rects so we can redraw any burned annotation that overlaps.
+    type Rect = { left: number; top: number; right: number; bottom: number };
+    const coverRects: Rect[] = [];
     this.ctx.fillStyle = "#ffffff";
     for (const [, original] of this.burnedOriginals) {
       if (original.page === this.currentPage) {
         const b = this.getAnnBounds(original);
         const pad = 6; // extra margin to cover anti-aliasing / stroke overflow
-        this.ctx.fillRect(b.left - pad, b.top - pad,
-          (b.right - b.left) + pad * 2, (b.bottom - b.top) + pad * 2);
+        const cr: Rect = { left: b.left - pad, top: b.top - pad,
+                           right: b.right + pad, bottom: b.bottom + pad };
+        coverRects.push(cr);
+        this.ctx.fillRect(cr.left, cr.top, cr.right - cr.left, cr.bottom - cr.top);
       }
     }
 
-    for (const ann of this.committed) this.drawAnnotation(ann);
+    for (const ann of this.committed) {
+      // If a burned annotation overlaps a white cover it would appear to vanish
+      // (the PDF canvas below is hidden by the cover). Redraw it on the overlay.
+      if (coverRects.length > 0 && this.burnedAnns.has(ann) && ann.page === this.currentPage) {
+        const ab = this.getAnnBounds(ann);
+        const hidden = coverRects.some(cr =>
+          ab.right >= cr.left && ab.left <= cr.right &&
+          ab.bottom >= cr.top && ab.top <= cr.bottom
+        );
+        if (hidden) { this.drawAnnotation(ann, true); continue; }
+      }
+      this.drawAnnotation(ann);
+    }
     if (this.selected && this.committed.includes(this.selected)) {
       this.drawSelectionBox(this.selected);
     }
@@ -397,10 +414,10 @@ export class CanvasOverlay {
     return result;
   }
 
-  private drawAnnotation(ann: Annotation): void {
+  private drawAnnotation(ann: Annotation, force = false): void {
     // Burned annotations are already rendered by pdf.js — skip to avoid doubling.
     // They become visible here again once the user modifies them.
-    if (this.burnedAnns.has(ann)) return;
+    if (!force && this.burnedAnns.has(ann)) return;
 
     const ctx = this.ctx;
     const { scale, pageHeightPt } = this;
