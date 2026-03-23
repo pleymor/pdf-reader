@@ -286,6 +286,27 @@ export class CanvasOverlay {
 
   // ── Annotation drawing ───────────────────────────────────────────────────────
 
+  /** Split text on explicit newlines then word-wrap each paragraph to maxWidth. */
+  private wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+    const result: string[] = [];
+    for (const para of text.split("\n")) {
+      if (!para) { result.push(""); continue; }
+      const words = para.split(" ");
+      let line = "";
+      for (const word of words) {
+        const candidate = line ? `${line} ${word}` : word;
+        if (line && ctx.measureText(candidate).width > maxWidth) {
+          result.push(line);
+          line = word;
+        } else {
+          line = candidate;
+        }
+      }
+      result.push(line);
+    }
+    return result;
+  }
+
   private drawAnnotation(ann: Annotation): void {
     const ctx = this.ctx;
     const { scale, pageHeightPt } = this;
@@ -310,8 +331,9 @@ export class CanvasOverlay {
       ctx.font      = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "normal"} ${ann.fontSize * scale}px Helvetica, Arial, sans-serif`;
       ctx.textAlign = ann.alignment as CanvasTextAlign;
       const lineH   = ann.fontSize * scale * 1.2;
-      const tx      = ann.alignment === "left" ? x : ann.alignment === "right" ? x + ann.width * scale : x + (ann.width * scale) / 2;
-      const lines   = ann.content.split("\n");
+      const maxW    = ann.width * scale;
+      const tx      = ann.alignment === "left" ? x : ann.alignment === "right" ? x + maxW : x + maxW / 2;
+      const lines   = this.wrapLines(ctx, ann.content, maxW);
       lines.forEach((line, i) => {
         const ly = y + i * lineH;
         ctx.fillText(line, tx, ly);
@@ -574,7 +596,7 @@ export class CanvasOverlay {
 
     const commit = (): void => {
       if (!input.isConnected) return;
-      const content = input.textContent?.trim() ?? "";
+      const content = (input.innerText ?? input.textContent ?? "").trim();
       input.remove();
       document.removeEventListener("mousedown", outsideClick, true);
       if (content) {
@@ -669,7 +691,7 @@ export class CanvasOverlay {
     `;
     const commit = (): void => {
       if (!input.isConnected) return;
-      const content = input.textContent?.trim() ?? "";
+      const content = (input.innerText ?? input.textContent ?? "").trim();
       input.remove();
       document.removeEventListener("mousedown", outsideClick, true);
       restore();
