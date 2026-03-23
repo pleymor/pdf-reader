@@ -1,0 +1,243 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body.drag-over::after {
+  content: "Drop PDF here";
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  color: #fff;
+  background: rgba(99, 148, 255, 0.25);
+  border: 3px dashed #6394ff;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+html, body {
+  height: 100%;
+  background: #1e1e1e;
+  color: #e8e8e8;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────────── */
+
+#toolbar-container {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #444;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  min-height: 44px;
+}
+
+.toolbar-sep {
+  width: 1px;
+  height: 22px;
+  background: #555;
+  margin: 0 4px;
+}
+
+.btn {
+  padding: 4px 10px;
+  background: #3a3a3a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e8e8e8;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: #4a4a4a;
+}
+
+.btn.active {
+  background: #1a6fb5;
+  border-color: #2090e0;
+}
+
+.btn-primary {
+  background: #1a6fb5;
+  border-color: #2090e0;
+}
+
+.btn-primary:hover {
+  background: #1e82d0;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #3a3a3a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e8e8e8;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.1s;
+}
+
+.icon-btn:hover { background: #4a4a4a; }
+.icon-btn.active { background: #1a6fb5; border-color: #2090e0; }
+
+label.toolbar-label {
+  color: #aaa;
+  font-size: 11px;
+}
+
+input[type="number"].toolbar-input {
+  width: 52px;
+  padding: 3px 6px;
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e8e8e8;
+  font-size: 12px;
+  text-align: center;
+}
+
+input[type="color"].color-picker {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #3a3a3a;
+  cursor: pointer;
+}
+
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.page-nav span {
+  color: #aaa;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ── Viewer ──────────────────────────────────────────────────────────────── */
+
+#viewer-scroll {
+  flex: 1;
+  overflow: auto;
+  background: #121212;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 20px;
+}
+
+#viewer-container {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+}
+
+#pdf-canvas {
+  display: block;
+  background: #fff;
+}
+
+#annotation-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none; /* enabled only when a draw tool is active */
+  background: transparent;
+}
+
+/* ── Modal ───────────────────────────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-backdrop.hidden {
+  display: none;
+}
+
+.modal-box {
+  background: #2d2d2d;
+  border: 1px solid #555;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+#signature-canvas {
+  background: #fff;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: crosshair;
+  display: block;
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  z-index: 200;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+
+.toast.hidden { display: none; }
+.toast.error { border-color: #c0392b; color: #e74c3c; }

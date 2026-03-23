@@ -1,0 +1,31 @@
+# Node / frontend
+node_modules/
+dist/
+public/
+*.log
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+*.rs.bk
+*.rlib
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
+# Tauri build artifacts
+src-tauri/WixTools/
