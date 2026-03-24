@@ -44,6 +44,10 @@ const store = new AnnotationStore();
 const toolState = defaultToolState();
 const toolbar = new Toolbar();
 const overlay = new CanvasOverlay(toolState);
+overlay.onHoverCursor = (offsetX, offsetY) =>
+  pageLinks.some((l) => offsetX >= l.left && offsetX <= l.right && offsetY >= l.top && offsetY <= l.bottom)
+    ? "pointer"
+    : "";
 const sigModal = new SignatureModal();
 
 // Hide viewer until a PDF is loaded

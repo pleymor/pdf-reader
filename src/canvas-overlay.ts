@@ -83,6 +83,9 @@ export class CanvasOverlay {
   private textSelectedHandlers:  TextAnnotationSelectedHandler[]  = [];
   private shapeSelectedHandlers: ShapeAnnotationSelectedHandler[] = [];
 
+  /** Called on hover when no annotation is hit; return the desired cursor string (e.g. "pointer") or "" for default. */
+  onHoverCursor: ((offsetX: number, offsetY: number) => string) | null = null;
+
   private committed: Annotation[] = [];
   /** Annotations already burned into the PDF content stream — rendered by
    *  pdf.js, so the overlay skips them until they are modified. */
@@ -607,7 +610,12 @@ export class CanvasOverlay {
         const h = this.hitHandle(e.offsetX, e.offsetY, this.selected);
         if (h) { this.canvas.style.cursor = HANDLE_CURSORS[h]; return; }
       }
-      this.canvas.style.cursor = this.hitTest(e.offsetX, e.offsetY) ? "grab" : "default";
+      if (this.hitTest(e.offsetX, e.offsetY)) {
+        this.canvas.style.cursor = "grab";
+      } else {
+        const override = this.onHoverCursor?.(e.offsetX, e.offsetY);
+        this.canvas.style.cursor = override || "default";
+      }
       return;
     }
 
