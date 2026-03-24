@@ -181,6 +181,11 @@ async function updateLinkLayer(): Promise<void> {
 
   let combined = "";
   const entries: SpanEntry[] = [];
+  // Positions in `combined` where WE inserted a line-break space (as opposed to
+  // natural spaces that are part of the PDF text).  Knowing these lets us detect
+  // when a URL match ends at our separator — meaning the URL may continue on the
+  // next line — while still preventing the regex from crossing line boundaries.
+  const lineBreakPos = new Set<number>();
   let prevTop = NaN;
   for (const span of textLayerEl.querySelectorAll("span") as NodeListOf<HTMLSpanElement>) {
     const text = span.textContent ?? "";
@@ -188,7 +193,10 @@ async function updateLinkLayer(): Promise<void> {
     const spanTop = parseFloat(span.style.top) || 0;
     // Insert a space between spans on different lines so the URL regex cannot
     // accidentally match across a line boundary into the next line's first word.
-    if (combined.length > 0 && Math.abs(spanTop - prevTop) > 2) combined += " ";
+    if (combined.length > 0 && Math.abs(spanTop - prevTop) > 2) {
+      lineBreakPos.add(combined.length);
+      combined += " ";
+    }
     const start = combined.length;
     combined += text;
     entries.push({
@@ -226,15 +234,45 @@ async function updateLinkLayer(): Promise<void> {
     return rects;
   };
 
-  // Scan visible text for URLs; group rects per URL
+  // Scan visible text for URLs; group rects per URL.
+  // Store startPos so we can look for continuation spans after a line-break space.
   const urlRe = /https?:\/\/[^\s)\]>"]+/g;
   let m: RegExpExecArray | null;
-  const domLinks = new Map<string, Rect[]>();
+  type DomEntry = { startPos: number; rects: Rect[] };
+  const domLinks = new Map<string, DomEntry>();
   while ((m = urlRe.exec(combined)) !== null) {
-    const rects = domRectsForRange(m.index, m.index + m[0].length);
+    const urlEnd = m.index + m[0].length;
+    const rects = domRectsForRange(m.index, urlEnd);
     if (rects.length > 0) {
-      if (!domLinks.has(m[0])) domLinks.set(m[0], []);
-      domLinks.get(m[0])!.push(...rects);
+      if (!domLinks.has(m[0])) domLinks.set(m[0], { startPos: m.index, rects });
+      else domLinks.get(m[0])!.rects.push(...rects);
+    }
+
+    // If the URL ends exactly at one of our injected line-break spaces, the URL
+    // may wrap onto the next line.  Check the immediately-following span: if its
+    // text looks like a URL fragment (no whitespace, contains a URL-specific char
+    // like . / - _ ? # = &, and is reasonably short), treat it as a continuation.
+    if (!lineBreakPos.has(urlEnd)) continue;
+    for (const e of entries) {
+      if (e.start < urlEnd + 1) continue;
+      if (e.start > urlEnd + 2) break;
+      // Extract leading URL characters from the span text
+      const fragMatch = /^[^\s)\]>"]+/.exec(e.text);
+      if (!fragMatch) break;
+      const frag = fragMatch[0];
+      // Must be short (URL remainders) and contain at least one URL-special char
+      // to rule out plain words that happen to follow the URL on the next line.
+      if (frag.length >= 2 && frag.length <= 40 && /[./\-_?#=&%]/.test(frag)) {
+        const fullUrl = m[0] + frag;
+        if (!domLinks.has(fullUrl)) {
+          const contRects = domRectsForRange(e.start, e.start + frag.length);
+          domLinks.set(fullUrl, {
+            startPos: m.index,
+            rects: [...(rects.length > 0 ? rects : []), ...contRects],
+          });
+        }
+      }
+      break;
     }
   }
 
@@ -251,14 +289,50 @@ async function updateLinkLayer(): Promise<void> {
 
   for (const { url, rect } of annotations) {
     if (addedUrls.has(url)) continue;
-    let domRects: Rect[] | undefined;
-    for (const [domUrl, rects] of domLinks) {
-      if (domUrl === url) { domRects = rects; break; }
+
+    // Find best match in domLinks (exact first, then longest common prefix)
+    let bestDomUrl = "";
+    let bestEntry: DomEntry | undefined;
+    for (const [domUrl, entry] of domLinks) {
+      if (domUrl === url) { bestDomUrl = domUrl; bestEntry = entry; break; }
       const n = Math.min(domUrl.length, url.length);
-      if (n >= 10 && domUrl.slice(0, n) === url.slice(0, n)) { domRects = rects; }
+      if (n >= 10 && domUrl.slice(0, n) === url.slice(0, n) && domUrl.length > bestDomUrl.length) {
+        bestDomUrl = domUrl;
+        bestEntry = entry;
+      }
     }
-    if (domRects) {
-      addLink(url, domRects);
+
+    if (bestEntry) {
+      const allRects = [...bestEntry.rects];
+
+      // Partial match: a line-break space cut the URL before it was fully matched.
+      // Check whether the span immediately after the space is a clean URL continuation
+      // (i.e. the span is almost entirely the remaining URL fragment, not a long line
+      // that merely starts with the same chars).  This recovers the second-line hit rect
+      // for multi-line URLs while avoiding false extensions into unrelated next-line text.
+      if (bestDomUrl.length < url.length) {
+        const remainder = url.slice(bestDomUrl.length);
+        const matchEnd = bestEntry.startPos + bestDomUrl.length;
+        for (const e of entries) {
+          if (e.start < matchEnd + 1) continue; // before the space
+          if (e.start > matchEnd + 2) break;    // too far ahead
+          // Entry starts right after the injected space separator
+          const remLen = Math.min(remainder.length, e.text.length);
+          if (
+            remLen >= 4 &&
+            e.text.slice(0, remLen) === remainder.slice(0, remLen) &&
+            e.text.length <= remLen + 2  // span is almost entirely the URL remainder
+          ) {
+            const clipR = e.left + measure(e.text.slice(0, remLen), e.span);
+            if (clipR > e.left) {
+              allRects.push({ left: e.left, top: e.top, right: clipR, bottom: e.top + e.fontSize });
+            }
+          }
+          break;
+        }
+      }
+
+      addLink(url, allRects);
     } else {
       const [x1, y1, x2, y2] = rect;
       addLink(url, [{ left: Math.min(x1, x2), top: Math.min(y1, y2), right: Math.max(x1, x2), bottom: Math.max(y1, y2) }]);
@@ -266,7 +340,7 @@ async function updateLinkLayer(): Promise<void> {
   }
 
   // Add DOM-discovered URLs not covered by a formal annotation
-  for (const [url, rects] of domLinks) {
+  for (const [url, { rects }] of domLinks) {
     if (!addedUrls.has(url)) addLink(url, rects);
   }
 
