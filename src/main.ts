@@ -148,8 +148,13 @@ function unregisterCloseGuard(): void {
   unlistenClose = null;
 }
 
-async function renderCurrentPage(): Promise<void> {
-  await viewer.render();
+function onFormChange(name: string, val: string): void {
+  formValues.set(name, val);
+  setDirty(true);
+}
+
+/** Rebuild all overlay layers after any render (zoom, page change, rotate…). */
+async function syncAllLayers(): Promise<void> {
   overlay.syncToPage(
     viewer.currentPage,
     viewer.scale,
@@ -160,10 +165,12 @@ async function renderCurrentPage(): Promise<void> {
   toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
   toolbar.updateZoom(viewer.scale);
   void updateLinkLayer();
-  await viewer.buildFormLayer(formLayerDiv, formValues, (name, val) => {
-    formValues.set(name, val);
-    setDirty(true);
-  });
+  await viewer.buildFormLayer(formLayerDiv, formValues, onFormChange);
+}
+
+async function renderCurrentPage(): Promise<void> {
+  await viewer.render();
+  await syncAllLayers();
 }
 
 // Stored link rects (canvas-px coords) for the current page — used for cursor detection
@@ -500,122 +507,51 @@ toolbar.on(async (e) => {
       if (viewer.isLoaded()) {
         await viewer.rotate();
         setDirty(true);
-        overlay.syncToPage(
-          viewer.currentPage,
-          viewer.scale,
-          viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage),
-          viewer.currentViewport ?? undefined
-        );
+        await syncAllLayers();
       }
       break;
 
     case "zoom-in":
-    case "zoom-out": {
-      if (!viewer.isLoaded()) break;
-      const newScale = snapZoom(viewer.scale, e.type === "zoom-in" ? 1 : -1);
-      await viewer.setScale(newScale);
-      overlay.syncToPage(
-        viewer.currentPage,
-        viewer.scale,
-        viewer.pageHeightPt,
-        store.getForPage(viewer.currentPage),
-        viewer.currentViewport ?? undefined
-      );
-      toolbar.updateZoom(viewer.scale);
+    case "zoom-out":
+      if (viewer.isLoaded()) {
+        await viewer.setScale(snapZoom(viewer.scale, e.type === "zoom-in" ? 1 : -1));
+        await syncAllLayers();
+      }
       break;
-    }
 
     case "zoom-set":
       if (viewer.isLoaded()) {
         await viewer.setScale(e.scale);
-        overlay.syncToPage(
-          viewer.currentPage,
-          viewer.scale,
-          viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage),
-          viewer.currentViewport ?? undefined
-        );
-        toolbar.updateZoom(viewer.scale);
+        await syncAllLayers();
       }
       break;
 
     case "fit-width":
       if (viewer.isLoaded()) {
         const scroll = document.getElementById("viewer-scroll")!;
-        const avail = scroll.clientWidth - 40; // minus 2×20px padding
-        const newScale = avail / viewer.pageWidthPt;
-        await viewer.setScale(newScale);
-        overlay.syncToPage(
-          viewer.currentPage,
-          viewer.scale,
-          viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage),
-          viewer.currentViewport ?? undefined
-        );
-        toolbar.updateZoom(viewer.scale);
-        void updateLinkLayer();
+        await viewer.setScale((scroll.clientWidth - 40) / viewer.pageWidthPt);
+        await syncAllLayers();
       }
       break;
 
     case "fit-height":
       if (viewer.isLoaded()) {
         const scroll = document.getElementById("viewer-scroll")!;
-        const avail = scroll.clientHeight - 40; // minus 2×20px padding
-        const newScale = avail / viewer.pageHeightPt;
-        await viewer.setScale(newScale);
-        overlay.syncToPage(
-          viewer.currentPage,
-          viewer.scale,
-          viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage),
-          viewer.currentViewport ?? undefined
-        );
-        toolbar.updateZoom(viewer.scale);
-        void updateLinkLayer();
+        await viewer.setScale((scroll.clientHeight - 40) / viewer.pageHeightPt);
+        await syncAllLayers();
       }
       break;
 
     case "page-prev":
-      if (viewer.isLoaded()) {
-        await viewer.prevPage();
-        overlay.syncToPage(
-          viewer.currentPage,
-          viewer.scale,
-          viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage),
-          viewer.currentViewport ?? undefined
-        );
-        toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
-      }
+      if (viewer.isLoaded()) { await viewer.prevPage();  await syncAllLayers(); }
       break;
 
     case "page-next":
-      if (viewer.isLoaded()) {
-        await viewer.nextPage();
-        overlay.syncToPage(
-          viewer.currentPage,
-          viewer.scale,
-          viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage),
-          viewer.currentViewport ?? undefined
-        );
-        toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
-      }
+      if (viewer.isLoaded()) { await viewer.nextPage();  await syncAllLayers(); }
       break;
 
     case "page-goto":
-      if (viewer.isLoaded()) {
-        await viewer.goToPage(e.page);
-        overlay.syncToPage(
-          viewer.currentPage,
-          viewer.scale,
-          viewer.pageHeightPt,
-          store.getForPage(viewer.currentPage),
-          viewer.currentViewport ?? undefined
-        );
-        toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
-      }
+      if (viewer.isLoaded()) { await viewer.goToPage(e.page); await syncAllLayers(); }
       break;
 
     case "tool-change":
@@ -769,16 +705,8 @@ window.addEventListener("keydown", async (e: KeyboardEvent) => {
   if (e.ctrlKey && (e.key === "+" || e.key === "=" || e.key === "-")) {
     if (!viewer.isLoaded()) return;
     e.preventDefault();
-    const newScale = snapZoom(viewer.scale, e.key === "-" ? -1 : 1);
-    await viewer.setScale(newScale);
-    overlay.syncToPage(
-      viewer.currentPage,
-      viewer.scale,
-      viewer.pageHeightPt,
-      store.getForPage(viewer.currentPage),
-      viewer.currentViewport ?? undefined
-    );
-    toolbar.updateZoom(viewer.scale);
+    await viewer.setScale(snapZoom(viewer.scale, e.key === "-" ? -1 : 1));
+    await syncAllLayers();
     return;
   }
   if (e.key !== "Escape") return;
@@ -800,16 +728,8 @@ window.addEventListener("keydown", async (e: KeyboardEvent) => {
 document.getElementById("viewer-scroll")!.addEventListener("wheel", async (e: WheelEvent) => {
   if (!e.ctrlKey || !viewer.isLoaded()) return;
   e.preventDefault();
-  const newScale = snapZoom(viewer.scale, e.deltaY < 0 ? 1 : -1);
-  await viewer.setScale(newScale);
-  overlay.syncToPage(
-    viewer.currentPage,
-    viewer.scale,
-    viewer.pageHeightPt,
-    store.getForPage(viewer.currentPage),
-    viewer.currentViewport ?? undefined
-  );
-  toolbar.updateZoom(viewer.scale);
+  await viewer.setScale(snapZoom(viewer.scale, e.deltaY < 0 ? 1 : -1));
+  await syncAllLayers();
 }, { passive: false });
 
 // ── Drag-drop ─────────────────────────────────────────────────────────────────
