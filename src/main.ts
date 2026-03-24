@@ -20,6 +20,7 @@ import {
   registerPdfHandler,
   registerPrintVerb,
   printPages,
+  openUrl,
 } from "./tauri-bridge";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -141,6 +142,18 @@ async function renderCurrentPage(): Promise<void> {
     viewer.currentViewport ?? undefined
   );
   toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
+  void updateLinkLayer();
+}
+
+// Stored link rects (canvas-px coords) for the current page — checked in viewer mousedown
+let pageLinks: { url: string; left: number; top: number; right: number; bottom: number }[] = [];
+
+async function updateLinkLayer(): Promise<void> {
+  const links = await viewer.getPageLinkAnnotations();
+  pageLinks = links.map(({ url, rect }) => {
+    const [x1, y1, x2, y2] = rect;
+    return { url, left: Math.min(x1, x2), top: Math.min(y1, y2), right: Math.max(x1, x2), bottom: Math.max(y1, y2) };
+  });
 }
 
 async function promptPassword(fp: string): Promise<void> {
@@ -294,6 +307,40 @@ toolbar.on(async (e) => {
       }
       break;
 
+    case "fit-width":
+      if (viewer.isLoaded()) {
+        const scroll = document.getElementById("viewer-scroll")!;
+        const avail = scroll.clientWidth - 40; // minus 2×20px padding
+        const newScale = avail / viewer.pageWidthPt;
+        await viewer.setScale(newScale);
+        overlay.syncToPage(
+          viewer.currentPage,
+          viewer.scale,
+          viewer.pageHeightPt,
+          store.getForPage(viewer.currentPage),
+          viewer.currentViewport ?? undefined
+        );
+        void updateLinkLayer();
+      }
+      break;
+
+    case "fit-height":
+      if (viewer.isLoaded()) {
+        const scroll = document.getElementById("viewer-scroll")!;
+        const avail = scroll.clientHeight - 40; // minus 2×20px padding
+        const newScale = avail / viewer.pageHeightPt;
+        await viewer.setScale(newScale);
+        overlay.syncToPage(
+          viewer.currentPage,
+          viewer.scale,
+          viewer.pageHeightPt,
+          store.getForPage(viewer.currentPage),
+          viewer.currentViewport ?? undefined
+        );
+        void updateLinkLayer();
+      }
+      break;
+
     case "page-prev":
       if (viewer.isLoaded()) {
         await viewer.prevPage();
@@ -406,9 +453,9 @@ overlay.onAnnotationReordered((ann: Annotation, dir) => {
 });
 
 overlay.onTextAnnotationSelected((ann: TextAnnotation | null) => {
-  editingTextAnn  = ann;
-  editingShapeAnn = null;
+  editingTextAnn = ann;
   if (ann) {
+    editingShapeAnn = null; // mutual exclusion: deselect shape
     toolbar.showTextStyles(ann);
     toolbar.hideShapeStyles();
   } else if (overlay.currentTool !== "text") {
@@ -418,8 +465,8 @@ overlay.onTextAnnotationSelected((ann: TextAnnotation | null) => {
 
 overlay.onShapeAnnotationSelected((ann: RectAnnotation | CircleAnnotation | null) => {
   editingShapeAnn = ann;
-  editingTextAnn  = null;
   if (ann) {
+    editingTextAnn = null; // mutual exclusion: deselect text
     toolbar.showShapeStyles(ann);
     toolbar.hideTextStyles();
   } else if (overlay.currentTool !== "rect" && overlay.currentTool !== "circle") {
@@ -452,6 +499,23 @@ document.getElementById("viewer-container")!.addEventListener("click", (e: Mouse
   pendingSignature = null;
   (e.currentTarget as HTMLElement).style.cursor = "";
   toolbar.clearActiveTool();
+});
+
+// Open PDF link annotations on click — fires after annotation canvas mousedown (bubbling),
+// so annotation selection/interaction always has priority.
+document.getElementById("viewer-container")!.addEventListener("mousedown", (e: MouseEvent) => {
+  if (overlay.currentTool !== "select" || pendingSignature) return;
+  if (editingTextAnn || editingShapeAnn) return;
+  const el = document.getElementById("viewer-container")!;
+  const rect = el.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  for (const link of pageLinks) {
+    if (x >= link.left && x <= link.right && y >= link.top && y <= link.bottom) {
+      void openUrl(link.url);
+      break;
+    }
+  }
 });
 
 // Escape cancels pending signature or deselects active drawing tool

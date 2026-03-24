@@ -42,6 +42,13 @@ export class PdfViewer {
   /** Height of the rendered canvas in pixels. */
   get canvasHeight(): number { return this.canvas.height; }
 
+  /** Width of the current page in PDF points (accounts for rotation). */
+  get pageWidthPt(): number {
+    if (this._viewport) return this._viewport.width / this._scale;
+    if (!this.currentPageObj) return 595; // A4 fallback
+    return this.currentPageObj.getViewport({ scale: 1, rotation: this._rotation }).viewBox[2];
+  }
+
   onPageChanged(cb: (page: number, total: number) => void): void {
     this.onPageChangedCb = cb;
   }
@@ -140,6 +147,28 @@ export class PdfViewer {
     this._scale = Math.max(0.5, Math.min(3.0, this._scale + delta));
     await this.render();
     return;
+  }
+
+  async setScale(scale: number): Promise<void> {
+    this._scale = Math.max(0.25, Math.min(5.0, scale));
+    await this.render();
+  }
+
+  /** Returns link annotations for the current page (subtype "Link" with a URL). */
+  async getPageLinkAnnotations(): Promise<Array<{ url: string; rect: [number, number, number, number] }>> {
+    if (!this.pdfDoc || !this._viewport) return [];
+    const page = await this.pdfDoc.getPage(this._currentPage);
+    const annotations = await page.getAnnotations();
+    const viewport = this._viewport;
+    const result: Array<{ url: string; rect: [number, number, number, number] }> = [];
+    for (const ann of annotations) {
+      if (ann.subtype !== "Link") continue;
+      const url: string | undefined = ann.url ?? ann.unsafeUrl;
+      if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) continue;
+      const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(ann.rect as [number, number, number, number]);
+      result.push({ url, rect: [x1, y1, x2, y2] });
+    }
+    return result;
   }
 
   /** Restore a known rotation without re-rendering (call render/renderCurrentPage after). */

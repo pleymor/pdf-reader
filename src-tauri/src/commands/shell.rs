@@ -293,6 +293,19 @@ pub fn register_print_verb() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("Only http/https URLs are supported".into());
+    }
+    // Use explorer.exe directly — avoids cmd.exe shell interpretation
+    Command::new("explorer.exe")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_default_apps_settings() -> Result<(), String> {
     Command::new("cmd")
         .args(["/C", "start", "", "ms-settings:defaultapps"])

@@ -47,6 +47,7 @@ pub fn run() {
             commands::shell::register_pdf_handler,
             commands::shell::register_print_verb,
             commands::shell::open_default_apps_settings,
+            commands::shell::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application")

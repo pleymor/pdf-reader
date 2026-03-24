@@ -19,6 +19,11 @@ import {
   ICON_RECT,
   ICON_CIRCLE,
   ICON_ROTATE_CW,
+  ICON_ALIGN_LEFT,
+  ICON_ALIGN_CENTER,
+  ICON_ALIGN_RIGHT,
+  ICON_FIT_WIDTH,
+  ICON_FIT_HEIGHT,
 } from "./icons";
 
 type ToolbarEvent =
@@ -28,6 +33,8 @@ type ToolbarEvent =
   | { type: "rotate" }
   | { type: "zoom-in" }
   | { type: "zoom-out" }
+  | { type: "fit-width" }
+  | { type: "fit-height" }
   | { type: "page-prev" }
   | { type: "page-next" }
   | { type: "page-goto"; page: number }
@@ -191,11 +198,16 @@ export class Toolbar {
     const zoomIn = this.btn(ICON_ZOOM_IN, "Zoom in", "icon-btn");
     zoomIn.addEventListener("click", () => this.emit({ type: "zoom-in" }));
 
+    const fitWidthBtn = this.btn(ICON_FIT_WIDTH, "Fit to width", "icon-btn");
+    fitWidthBtn.addEventListener("click", () => this.emit({ type: "fit-width" }));
+    const fitHeightBtn = this.btn(ICON_FIT_HEIGHT, "Fit to height", "icon-btn");
+    fitHeightBtn.addEventListener("click", () => this.emit({ type: "fit-height" }));
+
     // Rotate
     const rotateBtn = this.btn(ICON_ROTATE_CW, "Rotate 90° clockwise", "icon-btn");
     rotateBtn.addEventListener("click", () => this.emit({ type: "rotate" }));
 
-    d.append(zoomOut, zoomIn, rotateBtn, this.sep());
+    d.append(zoomOut, zoomIn, fitWidthBtn, fitHeightBtn, rotateBtn, this.sep());
 
     // Drawing tools
     const tools: [ToolKind, string, string][] = [
@@ -289,9 +301,9 @@ export class Toolbar {
 
     // Alignment
     const alignDefs: [TextAlignmentValue, string, string][] = [
-      ["left", "⇐", "Align left"],
-      ["center", "⇔", "Align center"],
-      ["right", "⇒", "Align right"],
+      ["left", ICON_ALIGN_LEFT, "Align left"],
+      ["center", ICON_ALIGN_CENTER, "Align center"],
+      ["right", ICON_ALIGN_RIGHT, "Align right"],
     ];
     this.alignBtns = alignDefs.map(([val, icon, title]) => {
       const b = this.btn(icon, title, "icon-btn");

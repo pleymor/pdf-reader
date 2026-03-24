@@ -83,3 +83,8 @@ export async function printPages(pagesB64: string[]): Promise<void> {
 export async function openDefaultAppsSettings(): Promise<void> {
   return invoke<void>("open_default_apps_settings");
 }
+
+/** Opens an http/https URL in the system default browser. */
+export async function openUrl(url: string): Promise<void> {
+  return invoke<void>("open_url", { url });
+}
