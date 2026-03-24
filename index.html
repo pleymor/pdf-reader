@@ -12,6 +12,7 @@
     <div id="viewer-scroll">
       <div id="viewer-container">
         <canvas id="pdf-canvas"></canvas>
+        <div id="text-layer"></div>
         <canvas id="annotation-canvas"></canvas>
       </div>
     </div>
@@ -30,6 +31,10 @@
         <button id="sig-place-btn" class="btn btn-primary">Place</button>
       </div>
     </div>
+  </div>
+  <!-- Context menu -->
+  <div id="ctx-menu" class="ctx-menu hidden">
+    <button id="ctx-copy">Copier</button>
   </div>
   <!-- Toast notification -->
   <div id="toast" class="toast hidden"></div>

@@ -195,7 +195,11 @@ export class CanvasOverlay {
   }
 
   private applyPointerEvents(tool: ToolKind): void {
-    this.canvas.style.pointerEvents = tool !== "signature" ? "auto" : "none";
+    // Annotation canvas only captures events when a draw tool is active.
+    // "select" and "signature" keep pointer-events:none so the text layer
+    // (below in z-index) receives events and text can be selected.
+    const isDrawTool = tool === "rect" || tool === "circle" || tool === "text";
+    this.canvas.style.pointerEvents = isDrawTool ? "auto" : "none";
   }
 
   /** Convert PDF user-space point → canvas pixel coords (handles rotation via viewport). */

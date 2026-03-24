@@ -15,11 +15,13 @@ export class PdfViewer {
   private _viewport: PageViewport | null = null;
 
   private canvas: HTMLCanvasElement;
+  private textLayerDiv: HTMLElement;
   private onPageChangedCb?: (page: number, total: number) => void;
   private onLoadedCb?: (pageCount: number) => void;
 
   constructor() {
     this.canvas = document.getElementById("pdf-canvas") as HTMLCanvasElement;
+    this.textLayerDiv = document.getElementById("text-layer") as HTMLElement;
   }
 
   get currentPage(): number { return this._currentPage; }
@@ -116,6 +118,9 @@ export class PdfViewer {
 
     await page.render({ canvasContext: ctx, viewport }).promise;
 
+    // Render selectable text layer
+    void this.buildTextLayer(page, viewport);
+
     this.onPageChangedCb?.(this._currentPage, this._pageCount);
     this.canvas.dispatchEvent(
       new CustomEvent("page-rendered", {
@@ -152,6 +157,74 @@ export class PdfViewer {
   async setScale(scale: number): Promise<void> {
     this._scale = Math.max(0.25, Math.min(5.0, scale));
     await this.render();
+  }
+
+  /** Build a transparent, selectable text layer from raw text content.
+   *  Each text item becomes an absolutely-positioned span with inline styles only,
+   *  so no external CSS file is required. */
+  private async buildTextLayer(page: PDFPageProxy, viewport: PageViewport): Promise<void> {
+    this.textLayerDiv.innerHTML = "";
+    this.textLayerDiv.style.width  = `${viewport.width}px`;
+    this.textLayerDiv.style.height = `${viewport.height}px`;
+
+    const textContent = await page.getTextContent();
+    const fragment = document.createDocumentFragment();
+
+    // Off-screen canvas for measuring rendered text widths
+    const measureCtx = document.createElement("canvas").getContext("2d")!;
+
+    for (const rawItem of textContent.items) {
+      if (!("str" in rawItem)) continue;
+      const item = rawItem as { str: string; transform: number[]; width: number; height: number };
+      if (!item.str) continue;
+
+      const [a, b, , , tx, ty] = item.transform;
+
+      // Baseline origin in viewport (CSS) pixels
+      const [vx, vy] = viewport.convertToViewportPoint(tx, ty);
+
+      // Convert a second point to get direction and font-size in viewport space
+      const [vpx, vpy] = viewport.convertToViewportPoint(tx + a, ty + b);
+      const fontSizePx = Math.hypot(vpx - vx, vpy - vy);
+      if (fontSizePx < 1) continue;
+
+      // Angle of text direction in CSS space
+      const angleDeg = Math.atan2(vpy - vy, vpx - vx) * (180 / Math.PI);
+
+      // Target width of the text run in viewport pixels
+      const widthPx = Math.max(item.width * viewport.scale, 1);
+
+      const span = document.createElement("span");
+      span.textContent = item.str;
+      span.style.position        = "absolute";
+      span.style.left            = `${vx}px`;
+      span.style.top             = `${vy - fontSizePx}px`;
+      span.style.fontSize        = `${fontSizePx}px`;
+      span.style.fontFamily      = "sans-serif";
+      span.style.lineHeight      = "1";
+      span.style.color           = "transparent";
+      span.style.whiteSpace      = "pre";
+      span.style.cursor          = "text";
+      span.style.pointerEvents   = "auto";
+      span.style.transformOrigin = "0% 100%";
+      span.style.setProperty("user-select",         "text");
+      span.style.setProperty("-webkit-user-select",  "text");
+
+      // Scale the span horizontally so it matches the PDF text width.
+      // This ensures the selection highlight covers the full visible text.
+      measureCtx.font = `${fontSizePx}px sans-serif`;
+      const measured = measureCtx.measureText(item.str).width;
+      const scaleX = measured > 0.5 ? widthPx / measured : 1;
+
+      const transforms: string[] = [];
+      if (Math.abs(angleDeg) > 0.5) transforms.push(`rotate(${angleDeg}deg)`);
+      if (Math.abs(scaleX - 1) > 0.02) transforms.push(`scaleX(${scaleX})`);
+      if (transforms.length) span.style.transform = transforms.join(" ");
+
+      fragment.appendChild(span);
+    }
+
+    this.textLayerDiv.appendChild(fragment);
   }
 
   /** Returns link annotations for the current page (subtype "Link" with a URL).
@@ -191,11 +264,12 @@ export class PdfViewer {
     }
 
     // 2. Bare URLs in text content (not wrapped in a link annotation)
-    type TItem = { str: string; transform: number[]; width: number; height: number };
-    const tItems = textContent.items.filter((it): it is TItem => "str" in it);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tItems = textContent.items.filter((it): it is any => "str" in it) as
+      Array<{ str: string; transform: number[]; width: number; height: number }>;
     // Build a concatenated string keeping per-item start offsets
     let combined = "";
-    const offsets: Array<{ item: TItem; start: number }> = [];
+    const offsets: Array<{ item: { str: string; transform: number[]; width: number; height: number }; start: number }> = [];
     for (const item of tItems) {
       offsets.push({ item, start: combined.length });
       combined += item.str;
@@ -267,5 +341,6 @@ export class PdfViewer {
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.canvas.width = 0;
     this.canvas.height = 0;
+    this.textLayerDiv.innerHTML = "";
   }
 }

@@ -505,11 +505,20 @@ document.getElementById("viewer-container")!.addEventListener("click", (e: Mouse
   toolbar.clearActiveTool();
 });
 
-// Open PDF link annotations on click — fires after annotation canvas mousedown (bubbling),
-// so annotation selection/interaction always has priority.
+// Track mousedown position so we can distinguish a click from a drag-to-select.
+let mouseDownX = 0;
+let mouseDownY = 0;
 document.getElementById("viewer-container")!.addEventListener("mousedown", (e: MouseEvent) => {
+  mouseDownX = e.clientX;
+  mouseDownY = e.clientY;
+});
+
+// Open PDF link annotations on a clean click (not a drag-to-select).
+document.getElementById("viewer-container")!.addEventListener("click", (e: MouseEvent) => {
   if (overlay.currentTool !== "select" || pendingSignature) return;
   if (editingTextAnn || editingShapeAnn) return;
+  // If the mouse moved more than 5 px, the user was selecting text — don't open link.
+  if (Math.hypot(e.clientX - mouseDownX, e.clientY - mouseDownY) > 5) return;
   const el = document.getElementById("viewer-container")!;
   const rect = el.getBoundingClientRect();
   const x = e.clientX - rect.left;
@@ -519,6 +528,33 @@ document.getElementById("viewer-container")!.addEventListener("mousedown", (e: M
       void openUrl(link.url);
       break;
     }
+  }
+});
+
+// ── Context menu ──────────────────────────────────────────────────────────────
+
+const ctxMenu = document.getElementById("ctx-menu")!;
+const ctxCopyBtn = document.getElementById("ctx-copy") as HTMLButtonElement;
+
+document.addEventListener("contextmenu", (e: MouseEvent) => {
+  e.preventDefault();
+  const sel = window.getSelection()?.toString() ?? "";
+  ctxCopyBtn.disabled = sel.length === 0;
+  ctxMenu.style.left = `${e.clientX}px`;
+  ctxMenu.style.top = `${e.clientY}px`;
+  ctxMenu.classList.remove("hidden");
+});
+
+ctxCopyBtn.addEventListener("click", async () => {
+  const text = window.getSelection()?.toString() ?? "";
+  if (text) await navigator.clipboard.writeText(text);
+  ctxMenu.classList.add("hidden");
+});
+
+// Close context menu on any click outside it
+document.addEventListener("mousedown", (e: MouseEvent) => {
+  if (!ctxMenu.contains(e.target as Node)) {
+    ctxMenu.classList.add("hidden");
   }
 });
 
