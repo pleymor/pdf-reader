@@ -80,6 +80,15 @@ export type Annotation =
   | TextAnnotation
   | SignatureAnnotation;
 
+// ── Form fields ───────────────────────────────────────────────────────────────
+
+export interface FormFieldValue {
+  /** Full PDF field name (dotted path for nested fields). */
+  name: string;
+  /** Text value, or "true"/"false" for checkboxes, or export value for radios. */
+  value: string;
+}
+
 // ── Tool state ────────────────────────────────────────────────────────────────
 
 export type ToolKind = "select" | "rect" | "circle" | "text" | "signature";

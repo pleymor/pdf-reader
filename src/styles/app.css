@@ -205,13 +205,49 @@ input[type="color"].color-picker {
   pointer-events: auto;
 }
 
+#form-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  z-index: 3;
+  pointer-events: none;
+}
+
+#form-layer input,
+#form-layer textarea,
+#form-layer select {
+  background: rgba(173, 214, 255, 0.45);
+  border: 1px solid rgba(100, 170, 255, 0.7);
+  border-radius: 1px;
+  pointer-events: auto;
+  box-sizing: border-box;
+  outline: none;
+  font-family: sans-serif;
+  color: #111;
+  padding: 1px 3px;
+}
+
+#form-layer input:focus,
+#form-layer textarea:focus,
+#form-layer select:focus {
+  background: rgba(173, 214, 255, 0.15);
+  box-shadow: 0 0 0 2px rgba(100, 170, 255, 0.6);
+}
+
+#form-layer input[type="checkbox"],
+#form-layer input[type="radio"] {
+  padding: 0;
+  cursor: pointer;
+}
+
 #annotation-canvas {
   position: absolute;
   top: 0;
   left: 0;
   pointer-events: none; /* controlled by JS: auto for draw tools, none for select/read */
   background: transparent;
-  z-index: 3;
+  z-index: 4;
 }
 
 

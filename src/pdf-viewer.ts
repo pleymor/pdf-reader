@@ -227,6 +227,117 @@ export class PdfViewer {
     this.textLayerDiv.appendChild(fragment);
   }
 
+  /** Build an interactive form layer over AcroForm Widget annotations.
+   *  @param container   The #form-layer div to populate.
+   *  @param storedValues Previously entered values, keyed by full field name.
+   *  @param onChange    Called whenever a field value changes. */
+  async buildFormLayer(
+    container: HTMLElement,
+    storedValues: Map<string, string>,
+    onChange: (name: string, value: string) => void
+  ): Promise<void> {
+    container.innerHTML = "";
+    if (!this.currentPageObj || !this._viewport) return;
+
+    const viewport = this._viewport;
+    container.style.width  = `${viewport.width}px`;
+    container.style.height = `${viewport.height}px`;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const annotations: any[] = await (this.currentPageObj as any).getAnnotations({ intent: "display" });
+
+    for (const a of annotations) {
+      if (a.subtype !== "Widget") continue;
+      if (a.hidden || a.readOnly) continue;
+
+      const fieldName: string = a.fieldName ?? "";
+      if (!fieldName) continue;
+
+      const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(a.rect as [number, number, number, number]);
+      const left   = Math.min(x1, x2);
+      const top    = Math.min(y1, y2);
+      const width  = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      const fontSize = Math.max(height * 0.65, 8);
+
+      const storedVal = storedValues.get(fieldName);
+      const initialVal: string = storedVal ?? (a.fieldValue ?? "");
+
+      let el: HTMLElement;
+
+      if (a.fieldType === "Tx") {
+        if (a.multiLine) {
+          const ta = document.createElement("textarea");
+          ta.value = initialVal;
+          ta.style.resize = "none";
+          ta.style.overflow = "hidden";
+          ta.addEventListener("input", () => onChange(fieldName, ta.value));
+          el = ta;
+        } else {
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.value = initialVal;
+          inp.addEventListener("input", () => onChange(fieldName, inp.value));
+          el = inp;
+        }
+      } else if (a.fieldType === "Btn") {
+        if (a.checkBox) {
+          const inp = document.createElement("input");
+          inp.type = "checkbox";
+          inp.checked = initialVal === "true" || initialVal === "Yes" || initialVal === "On";
+          inp.addEventListener("change", () => onChange(fieldName, inp.checked ? "true" : "false"));
+          inp.style.position = "absolute";
+          inp.style.left   = `${left}px`;
+          inp.style.top    = `${top}px`;
+          inp.style.width  = `${width}px`;
+          inp.style.height = `${height}px`;
+          container.appendChild(inp);
+          continue; // skip generic positioning below
+        } else if (a.radioButton) {
+          const inp = document.createElement("input");
+          inp.type  = "radio";
+          inp.name  = fieldName;
+          inp.value = a.exportValue ?? "true";
+          inp.checked = storedVal === inp.value || (!storedVal && a.fieldValue === a.exportValue);
+          inp.addEventListener("change", () => {
+            if (inp.checked) onChange(fieldName, inp.value);
+          });
+          inp.style.position = "absolute";
+          inp.style.left   = `${left}px`;
+          inp.style.top    = `${top}px`;
+          inp.style.width  = `${width}px`;
+          inp.style.height = `${height}px`;
+          container.appendChild(inp);
+          continue;
+        } else {
+          continue; // push button — skip
+        }
+      } else if (a.fieldType === "Ch") {
+        const sel = document.createElement("select");
+        const opts: Array<{ exportValue: string; displayValue: string }> = a.options ?? [];
+        for (const opt of opts) {
+          const option = document.createElement("option");
+          option.value = opt.exportValue;
+          option.textContent = opt.displayValue;
+          if (opt.exportValue === initialVal) option.selected = true;
+          sel.appendChild(option);
+        }
+        sel.addEventListener("change", () => onChange(fieldName, sel.value));
+        el = sel;
+      } else {
+        continue;
+      }
+
+      el.style.position  = "absolute";
+      el.style.left      = `${left}px`;
+      el.style.top       = `${top}px`;
+      el.style.width     = `${width}px`;
+      el.style.height    = `${height}px`;
+      el.style.fontSize  = `${fontSize}px`;
+      container.appendChild(el);
+    }
+  }
+
   /** Returns formal Link annotations for the current page with their viewport rects.
    *  QuadPoints are used when present (multi-line links); otherwise the annotation rect.
    *  Bare text URLs and accurate link hit-rects are computed in the UI layer via DOM

@@ -7,6 +7,7 @@ import {
   defaultToolState,
   type Annotation,
   type CircleAnnotation,
+  type FormFieldValue,
   type RectAnnotation,
   type TextAnnotation,
 } from "./models";
@@ -29,6 +30,9 @@ import { ask } from "@tauri-apps/plugin-dialog";
 
 const appWindow = getCurrentWindow();
 let unlistenClose: (() => void) | null = null;
+
+/** Stores user-entered form field values, keyed by full PDF field name. */
+const formValues = new Map<string, string>();
 
 let filePath: string | null = null;
 let outputPath: string | null = null;
@@ -143,12 +147,17 @@ async function renderCurrentPage(): Promise<void> {
   );
   toolbar.updatePageInfo(viewer.currentPage, viewer.pageCount);
   void updateLinkLayer();
+  await viewer.buildFormLayer(formLayerDiv, formValues, (name, val) => {
+    formValues.set(name, val);
+    setDirty(true);
+  });
 }
 
 // Stored link rects (canvas-px coords) for the current page — used for cursor detection
 let pageLinks: { url: string; left: number; top: number; right: number; bottom: number }[] = [];
 
-const linkLayerEl = document.getElementById("link-layer")!;
+const linkLayerEl  = document.getElementById("link-layer")!;
+const formLayerDiv = document.getElementById("form-layer") as HTMLElement;
 
 async function updateLinkLayer(): Promise<void> {
   const canvas = document.getElementById("pdf-canvas") as HTMLCanvasElement;
@@ -382,6 +391,7 @@ async function loadPdf(path: string): Promise<void> {
   try {
     await viewer.load(path);
     store.clear();
+    formValues.clear();
     filePath = path;
     outputPath = null;
 
@@ -429,7 +439,8 @@ async function saveFile(forceDialog: boolean): Promise<void> {
   }
 
   try {
-    await saveAnnotatedPdf(filePath, target, store.getAll(), viewer.rotation);
+    const fv: FormFieldValue[] = [...formValues.entries()].map(([name, value]) => ({ name, value }));
+    await saveAnnotatedPdf(filePath, target, store.getAll(), viewer.rotation, fv);
     filePath = target; // subsequent saves use the saved file (stream IDs live there)
     setDirty(false);
 

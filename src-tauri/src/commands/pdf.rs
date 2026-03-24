@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use lopdf::Document;
 
-use crate::pdf::{models::Annotation, writer};
+use crate::pdf::{models::Annotation, writer, writer::FormFieldValue};
 
 /// Returns the total number of pages in the given PDF file.
 #[tauri::command]
@@ -22,6 +22,7 @@ pub fn save_annotated_pdf(
     output_path: String,
     annotations: Vec<Annotation>,
     rotation_delta: i64,
+    form_fields: Vec<FormFieldValue>,
 ) -> Result<(), String> {
     let mut doc = Document::load(&input_path).map_err(|e| e.to_string())?;
 
@@ -80,6 +81,9 @@ pub fn save_annotated_pdf(
     meta.annotations = annotations;
     meta.stream_ids  = new_stream_ids;
     writer::save_meta(&mut doc, &meta)?;
+
+    // Write form field values into the PDF's AcroForm structure
+    writer::write_form_fields(&mut doc, &form_fields)?;
 
     doc.save(&output_path).map_err(|e| e.to_string())?;
     Ok(())

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Annotation } from "./models";
+import type { Annotation, FormFieldValue } from "./models";
 
 /** Opens a file-picker dialog filtered to PDF files. Returns the path or null. */
 export async function openPdfDialog(): Promise<string | null> {
@@ -30,12 +30,14 @@ export async function saveAnnotatedPdf(
   outputPath: string,
   annotations: Annotation[],
   rotationDelta = 0,
+  formFields: FormFieldValue[] = [],
 ): Promise<void> {
   return invoke<void>("save_annotated_pdf", {
     inputPath,
     outputPath,
     annotations,
     rotationDelta,
+    formFields,
   });
 }
 
