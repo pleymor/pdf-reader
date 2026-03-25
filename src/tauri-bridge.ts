@@ -41,6 +41,15 @@ export async function saveAnnotatedPdf(
   });
 }
 
+/** Creates a copy of the PDF with annotation content streams emptied (display use).
+ *  CCAnnot metadata is preserved. Returns true if streams were found and cleared. */
+export async function stripAnnotationStreams(
+  inputPath: string,
+  outputPath: string,
+): Promise<boolean> {
+  return invoke<boolean>("strip_annotation_streams", { inputPath, outputPath });
+}
+
 /**
  * Reads editable annotations stored in the PDF's CCAnnot catalog entry.
  * Returns an empty array if the file has no stored annotations.

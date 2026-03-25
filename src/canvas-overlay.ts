@@ -87,13 +87,9 @@ export class CanvasOverlay {
   onHoverCursor: ((offsetX: number, offsetY: number) => string) | null = null;
 
   private committed: Annotation[] = [];
-  /** Annotations already burned into the PDF content stream — rendered by
-   *  pdf.js, so the overlay skips them until they are modified. */
-  private burnedAnns: Set<Annotation> = new Set();
-  /** Snapshot of each annotation's state at the moment it was un-burned.
-   *  Used to draw a white cover over its old burned position so the stale
-   *  PDF-canvas rendering is hidden. Cleared when markBurned() is called. */
-  private burnedOriginals: Map<Annotation, Annotation> = new Map();
+
+  // ── Before-modify callbacks ──────────────────────────────────────────────────
+  private beforeModifyHandlers: (() => void)[] = [];
 
   constructor(initialStyle: ActiveToolState) {
     this.style = { ...initialStyle };
@@ -114,6 +110,8 @@ export class CanvasOverlay {
     // flip pointer-events:auto so the canvas can handle clicks/drags.
     document.getElementById("viewer-container")
       ?.addEventListener("mousemove", this.onContainerMouseMove);
+    document.getElementById("viewer-container")
+      ?.addEventListener("mousedown", this.onContainerMouseDown);
 
     this.applyPointerEvents(this.activeTool);
   }
@@ -125,23 +123,10 @@ export class CanvasOverlay {
   onTextAnnotationSelected (h: TextAnnotationSelectedHandler):  void { this.textSelectedHandlers.push(h); }
   onShapeAnnotationSelected(h: ShapeAnnotationSelectedHandler): void { this.shapeSelectedHandlers.push(h); }
 
-  /** Mark these annotations as already burned into the PDF content stream.
-   *  The overlay will skip rendering them to avoid visual doubling — they are
-   *  shown by pdf.js instead. Automatically cleared when they are modified. */
-  markBurned(anns: Annotation[]): void {
-    this.burnedAnns = new Set(anns);
-    this.burnedOriginals.clear(); // saved positions are now up-to-date
-    this.redrawCommitted();
-  }
-
-  /** Remove `ann` from the burned set and record a snapshot of its current
-   *  state so `redrawCommitted` can paint a cover over the stale PDF position. */
-  private unmarkBurned(ann: Annotation): void {
-    if (!this.burnedAnns.has(ann)) return;
-    // Shallow clone is enough — we only read positional/size fields for bounds
-    this.burnedOriginals.set(ann, { ...ann } as Annotation);
-    this.burnedAnns.delete(ann);
-  }
+  /** Register a callback invoked just before any annotation is mutated (move,
+   *  resize, delete, style change, text edit). Use to snapshot history. */
+  onBeforeModify(h: () => void): void { this.beforeModifyHandlers.push(h); }
+  private emitBeforeModify(): void { this.beforeModifyHandlers.forEach(h => h()); }
 
   private emit             (a: Annotation): void { this.createdHandlers.forEach(h => h(a)); }
   private emitMoved        (a: Annotation): void { this.movedHandlers.forEach(h => h(a)); }
@@ -156,7 +141,7 @@ export class CanvasOverlay {
 
   /** Apply shape style fields to an existing rect/circle and redraw. */
   applyShapeAnnotationStyle(ann: RectAnnotation | CircleAnnotation, color: RgbColor, strokeWidth: number): void {
-    this.unmarkBurned(ann);
+    this.emitBeforeModify();
     ann.color = { ...color };
     ann.strokeWidth = strokeWidth;
     this.redrawCommitted();
@@ -168,7 +153,7 @@ export class CanvasOverlay {
     ann: TextAnnotation,
     style: Pick<ActiveToolState, "color" | "fontSize" | "bold" | "italic" | "underline" | "alignment">
   ): void {
-    this.unmarkBurned(ann);
+    this.emitBeforeModify();
     ann.color     = { ...style.color };
     ann.fontSize  = style.fontSize;
     ann.bold      = style.bold;
@@ -247,6 +232,11 @@ export class CanvasOverlay {
 
     this.committed = [...annotations];
     this.redrawCommitted();
+    // Always reset pointer-events to the correct state for the current tool.
+    // Without this, if the canvas was left with pointer-events:auto (from a draw
+    // mode or annotation hover) before loading a new PDF, form inputs below the
+    // canvas would be unclickable.
+    this.applyPointerEvents(this.activeTool);
   }
 
   // ── Bounding box ─────────────────────────────────────────────────────────────
@@ -320,7 +310,6 @@ export class CanvasOverlay {
 
   /** Compute fixed-edge anchors in PDF pts for the given handle. */
   private startResize(ann: Annotation, handle: ResizeHandle): void {
-    this.unmarkBurned(ann); // will be re-rendered by overlay during resize
     this.resizing      = true;
     this.resizeHandle  = handle;
     this.dragTarget    = ann;
@@ -373,35 +362,7 @@ export class CanvasOverlay {
 
   redrawCommitted(): void {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-
-    // Paint a white cover over each old burned position so the stale PDF-canvas
-    // rendering is hidden while the annotation is being edited/moved.
-    // Collect cover rects so we can redraw any burned annotation that overlaps.
-    type Rect = { left: number; top: number; right: number; bottom: number };
-    const coverRects: Rect[] = [];
-    this.ctx.fillStyle = "#ffffff";
-    for (const [, original] of this.burnedOriginals) {
-      if (original.page === this.currentPage) {
-        const b = this.getAnnBounds(original);
-        const pad = 6; // extra margin to cover anti-aliasing / stroke overflow
-        const cr: Rect = { left: b.left - pad, top: b.top - pad,
-                           right: b.right + pad, bottom: b.bottom + pad };
-        coverRects.push(cr);
-        this.ctx.fillRect(cr.left, cr.top, cr.right - cr.left, cr.bottom - cr.top);
-      }
-    }
-
     for (const ann of this.committed) {
-      // If a burned annotation overlaps a white cover it would appear to vanish
-      // (the PDF canvas below is hidden by the cover). Redraw it on the overlay.
-      if (coverRects.length > 0 && this.burnedAnns.has(ann) && ann.page === this.currentPage) {
-        const ab = this.getAnnBounds(ann);
-        const hidden = coverRects.some(cr =>
-          ab.right >= cr.left && ab.left <= cr.right &&
-          ab.bottom >= cr.top && ab.top <= cr.bottom
-        );
-        if (hidden) { this.drawAnnotation(ann, true); continue; }
-      }
       this.drawAnnotation(ann);
     }
     if (this.selected && this.committed.includes(this.selected)) {
@@ -465,11 +426,7 @@ export class CanvasOverlay {
     return result;
   }
 
-  private drawAnnotation(ann: Annotation, force = false): void {
-    // Burned annotations are already rendered by pdf.js — skip to avoid doubling.
-    // They become visible here again once the user modifies them.
-    if (!force && this.burnedAnns.has(ann)) return;
-
+  private drawAnnotation(ann: Annotation): void {
     const ctx = this.ctx;
     const { scale } = this;
 
@@ -575,6 +532,25 @@ export class CanvasOverlay {
       : "default";
   };
 
+  private onContainerMouseDown = (e: MouseEvent): void => {
+    if (this.activeTool !== "select") return;
+    if (this.dragging || this.resizing) return;
+    if (!this.selected) return;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+
+    const hitAnn = this.hitTest(cx, cy);
+    const hitH   = this.hitHandle(cx, cy, this.selected);
+    if (!hitAnn && !hitH) {
+      this.selected = null;
+      this.redrawCommitted();
+      this.emitTextSelected(null);
+      this.emitShapeSelected(null);
+    }
+  };
+
   private onMouseDown = (e: MouseEvent): void => {
     if (this.activeTool === "signature") return;
 
@@ -583,6 +559,7 @@ export class CanvasOverlay {
       if (this.selected) {
         const h = this.hitHandle(e.offsetX, e.offsetY, this.selected);
         if (h) {
+          this.emitBeforeModify();
           this.startResize(this.selected, h);
           this.canvas.style.cursor = HANDLE_CURSORS[h];
           return;
@@ -592,7 +569,7 @@ export class CanvasOverlay {
       const hit = this.hitTest(e.offsetX, e.offsetY);
       this.selected = hit;
       if (hit) {
-        this.unmarkBurned(hit); // will be re-rendered by overlay during drag
+        this.emitBeforeModify();
         const bounds = this.getAnnBounds(hit);
         this.dragging    = true;
         this.dragTarget  = hit;
@@ -747,12 +724,16 @@ export class CanvasOverlay {
   };
 
   private onKeyDown = (e: KeyboardEvent): void => {
+    // Don't intercept keys while the user is typing in a form field
+    const tag = (document.activeElement as HTMLElement)?.tagName ?? "";
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
+        (document.activeElement as HTMLElement)?.isContentEditable) return;
     if ((e.key === "Delete" || e.key === "Backspace") &&
         this.selected && this.activeTool === "select") {
+      this.emitBeforeModify();
       const idx = this.committed.indexOf(this.selected);
       if (idx !== -1) this.committed.splice(idx, 1);
       const removed = this.selected;
-      this.unmarkBurned(removed); // cover old burned position until next save
       this.selected = null;
       this.redrawCommitted();
       this.emitRemoved(removed);
@@ -870,7 +851,6 @@ export class CanvasOverlay {
     const boxW   = ann.width * scale;
 
     // Hide the canvas rendering while the edit div is visible
-    this.unmarkBurned(ann); // record old bounds before content changes
     const idx = this.committed.indexOf(ann);
     if (idx !== -1) this.committed.splice(idx, 1);
     this.selected = null;
@@ -903,6 +883,7 @@ export class CanvasOverlay {
       document.removeEventListener("mousedown", outsideClick, true);
       restore();
       if (content && content !== ann.content) {
+        this.emitBeforeModify();
         ann.content = content;
         this.emitMoved(ann);
       }

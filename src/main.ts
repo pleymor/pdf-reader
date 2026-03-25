@@ -6,6 +6,7 @@ import { SignatureModal } from "./signature-modal";
 import { SettingsModal } from "./settings";
 import { getTranslations, applyTranslationsToDOM } from "./i18n";
 import { AnnotationStore } from "./annotation-store";
+import { AnnotationHistory } from "./annotation-history";
 import {
   defaultToolState,
   type Annotation,
@@ -18,6 +19,7 @@ import {
   openPdfDialog,
   savePdfDialog,
   saveAnnotatedPdf,
+  stripAnnotationStreams,
   compressPdf,
   readAnnotations,
   getStartupArgs,
@@ -52,6 +54,9 @@ const formValues = new Map<string, string>();
 
 let filePath: string | null = null;
 let outputPath: string | null = null;
+/** Path to the display version of the PDF (annotation streams stripped).
+ *  null when the current file has no burned annotations. */
+let displayFilePath: string | null = null;
 let isDirty = false;
 let pendingSignature: string | null = null; // base64 PNG while in placing mode
 let editingTextAnn:  TextAnnotation | null = null;
@@ -64,6 +69,7 @@ const store = new AnnotationStore();
 const toolState = defaultToolState();
 const toolbar = new Toolbar();
 const overlay = new CanvasOverlay(toolState);
+const history = new AnnotationHistory();
 const compressModal = new CompressModal();
 const sigModal = new SignatureModal();
 const settingsModal = new SettingsModal();
@@ -434,16 +440,24 @@ async function loadPdf(path: string): Promise<void> {
     formValues.clear();
     filePath = path;
     outputPath = null;
+    displayFilePath = null;
 
     // Restore any previously saved annotations from the PDF catalog
     const saved = await readAnnotations(path);
     for (const ann of saved) {
       store.add(ann);
     }
-    // Mark as burned so the overlay doesn't double-render them
-    // (they are already visible via the burned PDF content stream)
-    overlay.markBurned(saved);
 
+    // If there are burned annotations, strip them from the display copy so
+    // pdf.js renders a clean page — the overlay owns all annotation drawing.
+    if (saved.length > 0) {
+      const dp = path + ".display.pdf";
+      await stripAnnotationStreams(path, dp);
+      displayFilePath = dp;
+      await viewer.load(dp);
+    }
+
+    history.clear();
     setDirty(false);
     toolbar.setLoaded(true);
     document.getElementById("viewer-container")!.style.display = "";
@@ -480,19 +494,12 @@ async function saveFile(forceDialog: boolean): Promise<void> {
 
   try {
     const fv: FormFieldValue[] = [...formValues.entries()].map(([name, value]) => ({ name, value }));
-    await saveAnnotatedPdf(filePath, target, store.getAll(), viewer.rotation, fv);
-    filePath = target; // subsequent saves use the saved file (stream IDs live there)
+    // Save from the display file (clean, no burns) or the original if no display exists.
+    // The display version is a valid base for all saves since it contains the full page
+    // content — only the annotation streams were emptied.
+    await saveAnnotatedPdf(displayFilePath ?? filePath, target, store.getAll(), viewer.rotation, fv);
+    filePath = target;
     setDirty(false);
-
-    // Reload the PDF canvas from the saved file so the freshly burned annotations
-    // are shown by pdf.js. The rotation was baked into the PDF's Rotate entry, so
-    // after load (which resets _rotation to 0) the page renders correctly via page.rotate.
-    const savedPage = viewer.currentPage;
-    await viewer.load(target);
-    if (savedPage !== 1) await viewer.goToPage(savedPage);
-    await renderCurrentPage();
-    overlay.markBurned(store.getAll());
-
     showToast("Saved.");
   } catch (err: unknown) {
     showToast(`Save failed: ${err}`, true);
@@ -652,12 +659,26 @@ toolbar.on(async (e) => {
 document.addEventListener("keydown", async (e) => {
   // Don't fire while typing in any input or contenteditable
   const tag = (document.activeElement as HTMLElement)?.tagName ?? "";
-  if (tag === "INPUT" || tag === "TEXTAREA" ||
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
       (document.activeElement as HTMLElement)?.isContentEditable) return;
 
   const ctrl  = e.ctrlKey || e.metaKey;
   const shift = e.shiftKey;
 
+  // Ctrl+Z — Undo
+  if (ctrl && !shift && e.key === "z") {
+    e.preventDefault();
+    const prev = history.undo(store.getAll());
+    if (prev) { store.replaceAll(prev); await syncAllLayers(); setDirty(true); }
+    return;
+  }
+  // Ctrl+Y or Ctrl+Shift+Z — Redo
+  if (ctrl && (e.key === "y" || (shift && e.key === "Z"))) {
+    e.preventDefault();
+    const next = history.redo(store.getAll());
+    if (next) { store.replaceAll(next); await syncAllLayers(); setDirty(true); }
+    return;
+  }
   // Ctrl+O — Open
   if (ctrl && !shift && e.key === "o") {
     e.preventDefault();
@@ -721,9 +742,14 @@ document.addEventListener("keydown", async (e) => {
 // ── Annotation events ─────────────────────────────────────────────────────────
 
 overlay.onAnnotationCreated((ann: Annotation) => {
+  history.push(store.getAll()); // snapshot before add (store doesn't yet contain ann)
   store.add(ann);
   setDirty(true);
   toolbar.clearActiveTool();
+});
+
+overlay.onBeforeModify(() => {
+  history.push(store.getAll());
 });
 
 overlay.onAnnotationMoved(() => {
@@ -782,6 +808,7 @@ document.getElementById("viewer-container")!.addEventListener("click", (e: Mouse
   const y = e.clientY - rect.top;
 
   // Default signature size: 150 × 60 PDF points
+  history.push(store.getAll()); // snapshot before add
   const ann = overlay.placeSignature(x, y, pendingSignature, 150, 60);
   store.add(ann);
   setDirty(true);

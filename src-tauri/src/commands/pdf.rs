@@ -89,6 +89,26 @@ pub fn save_annotated_pdf(
     Ok(())
 }
 
+/// Creates a copy of the PDF with annotation content streams emptied
+/// (the CCAnnot metadata is preserved). Returns true if any streams were cleared.
+/// Used to produce a "display" PDF that pdf.js can render without showing
+/// burned annotation content — the overlay draws all annotations from memory.
+#[tauri::command]
+pub fn strip_annotation_streams(
+    input_path: String,
+    output_path: String,
+) -> Result<bool, String> {
+    let mut doc = Document::load(&input_path).map_err(|e| e.to_string())?;
+    let meta = writer::load_meta(&doc);
+    if meta.stream_ids.is_empty() {
+        doc.save(&output_path).map_err(|e| e.to_string())?;
+        return Ok(false);
+    }
+    writer::clear_annotation_streams(&mut doc, &meta)?;
+    doc.save(&output_path).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// Reads editable annotations from the PDF's `CCAnnot` catalog entry.
 /// Returns an empty array if the file has no stored annotations.
 #[tauri::command]

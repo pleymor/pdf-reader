@@ -67,6 +67,11 @@ export class AnnotationStore {
     }
   }
 
+  replaceAll(anns: Annotation[]): void {
+    this.store.clear();
+    for (const ann of anns) this.add(ann);
+  }
+
   clear(): void {
     this.store.clear();
   }
