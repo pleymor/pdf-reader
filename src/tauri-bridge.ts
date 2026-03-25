@@ -90,3 +90,20 @@ export async function openDefaultAppsSettings(): Promise<void> {
 export async function openUrl(url: string): Promise<void> {
   return invoke<void>("open_url", { url });
 }
+
+export interface CompressResult {
+  originalBytes: number;
+  compressedBytes: number;
+}
+
+/**
+ * Compresses JPEG image streams in `inputPath` at the given quality level
+ * and writes the result to `outputPath`. Returns both file sizes in bytes.
+ */
+export async function compressPdf(
+  inputPath: string,
+  outputPath: string,
+  level: "screen" | "ebook" | "print",
+): Promise<CompressResult> {
+  return invoke<CompressResult>("compress_pdf", { inputPath, outputPath, level });
+}

@@ -36,6 +36,7 @@ pub fn run() {
             startup_args: Mutex::new(startup),
         })
         .invoke_handler(tauri::generate_handler![
+            commands::compress::compress_pdf,
             commands::dialog::open_pdf_dialog,
             commands::dialog::save_pdf_dialog,
             commands::pdf::get_page_count,

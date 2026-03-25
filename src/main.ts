@@ -1,6 +1,7 @@
 import { PdfViewer } from "./pdf-viewer";
 import { Toolbar } from "./toolbar";
 import { CanvasOverlay } from "./canvas-overlay";
+import { CompressModal } from "./compress-modal";
 import { SignatureModal } from "./signature-modal";
 import { SettingsModal } from "./settings";
 import { getTranslations, applyTranslationsToDOM } from "./i18n";
@@ -17,6 +18,7 @@ import {
   openPdfDialog,
   savePdfDialog,
   saveAnnotatedPdf,
+  compressPdf,
   readAnnotations,
   getStartupArgs,
   checkPdfAssociation,
@@ -62,6 +64,7 @@ const store = new AnnotationStore();
 const toolState = defaultToolState();
 const toolbar = new Toolbar();
 const overlay = new CanvasOverlay(toolState);
+const compressModal = new CompressModal();
 const sigModal = new SignatureModal();
 const settingsModal = new SettingsModal();
 
@@ -69,11 +72,13 @@ const settingsModal = new SettingsModal();
 {
   const t = getTranslations(settingsModal.getSettings().language);
   toolbar.applyTranslations(t);
+  compressModal.applyTranslations(t);
   applyTranslationsToDOM(t);
 }
 settingsModal.onChange(s => {
   const t = getTranslations(s.language);
   toolbar.applyTranslations(t);
+  compressModal.applyTranslations(t);
   applyTranslationsToDOM(t);
 });
 
@@ -502,6 +507,26 @@ async function confirmUnsaved(): Promise<boolean> {
   });
 }
 
+// ── Compress handler ──────────────────────────────────────────────────────────
+
+compressModal.onConfirm(async (level) => {
+  if (!filePath) return;
+  const outputPath = await savePdfDialog(filePath);
+  if (!outputPath) return;
+
+  try {
+    const result = await compressPdf(filePath, outputPath, level);
+    const fromMB = (result.originalBytes   / 1_048_576).toFixed(1);
+    const toMB   = (result.compressedBytes / 1_048_576).toFixed(1);
+    const pct    = result.originalBytes > 0
+      ? Math.round((1 - result.compressedBytes / result.originalBytes) * 100)
+      : 0;
+    showToast(`Compressed: ${fromMB} MB \u2192 ${toMB} MB (${pct}% smaller)`);
+  } catch (err) {
+    showToast(`Compression failed: ${err}`, true);
+  }
+});
+
 // ── Toolbar events ────────────────────────────────────────────────────────────
 
 toolbar.on(async (e) => {
@@ -516,6 +541,10 @@ toolbar.on(async (e) => {
 
     case "save-as":
       await saveFile(true);
+      break;
+
+    case "compress":
+      if (filePath) compressModal.open();
       break;
 
     case "rotate":

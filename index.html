@@ -34,6 +34,41 @@
       </div>
     </div>
   </div>
+  <!-- Compress modal -->
+  <div id="compress-modal" class="modal-backdrop hidden">
+    <div class="modal-box compress-box">
+      <div class="modal-header">
+        <span id="compress-title-span" data-i18n="compressTitle">Compress PDF</span>
+        <button id="compress-close-btn" class="icon-btn" title="Cancel" data-i18n-title="compressClose">✕</button>
+      </div>
+      <div class="compress-options">
+        <label class="compress-option">
+          <input type="radio" name="compress-level" value="screen" />
+          <div class="compress-option-body">
+            <span id="compress-screen-label" class="compress-option-name" data-i18n="compressScreen">Screen</span>
+            <span class="compress-option-desc" data-i18n="compressScreenDesc">Smallest file, lower quality</span>
+          </div>
+        </label>
+        <label class="compress-option">
+          <input type="radio" name="compress-level" value="ebook" checked />
+          <div class="compress-option-body">
+            <span id="compress-ebook-label" class="compress-option-name" data-i18n="compressEbook">Ebook</span>
+            <span class="compress-option-desc" data-i18n="compressEbookDesc">Balanced size and quality</span>
+          </div>
+        </label>
+        <label class="compress-option">
+          <input type="radio" name="compress-level" value="print" />
+          <div class="compress-option-body">
+            <span id="compress-print-label" class="compress-option-name" data-i18n="compressPrint">Print</span>
+            <span class="compress-option-desc" data-i18n="compressPrintDesc">Good quality, moderate reduction</span>
+          </div>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button id="compress-apply-btn" class="btn btn-primary" data-i18n="compressApply">Compress &amp; Save As…</button>
+      </div>
+    </div>
+  </div>
   <!-- Context menu -->
   <div id="ctx-menu" class="ctx-menu hidden">
     <button id="ctx-copy" data-i18n="ctxCopy">Copy</button>

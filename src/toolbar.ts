@@ -32,6 +32,7 @@ type ToolbarEvent =
   | { type: "open" }
   | { type: "save" }
   | { type: "save-as" }
+  | { type: "compress" }
   | { type: "rotate" }
   | { type: "zoom-in" }
   | { type: "zoom-out" }
@@ -316,10 +317,13 @@ export class Toolbar {
     const saveAsBtn = this.btn("Save As\u2026", "Save PDF as\u2026");
     this.reg(saveAsBtn, "btnSaveAs", "ttSaveAs");
     saveAsBtn.addEventListener("click", () => this.emit({ type: "save-as" }));
+    const compressBtn = this.btn("Compress\u2026", "Compress PDF");
+    this.reg(compressBtn, "btnCompress", "ttCompress");
+    compressBtn.addEventListener("click", () => this.emit({ type: "compress" }));
     const printBtn = this.btn(ICON_PRINT, "Print", "icon-btn");
     this.reg(printBtn, undefined, "ttPrint");
     printBtn.addEventListener("click", () => window.print());
-    d.append(saveBtn, saveAsBtn, this.sep(), printBtn);
+    d.append(saveBtn, saveAsBtn, compressBtn, this.sep(), printBtn);
 
     // Settings — always visible, pinned to the right
     const settingsBtn = this.btn(ICON_SETTINGS, "Settings", "icon-btn");
