@@ -579,8 +579,11 @@ export class PdfViewer {
     if (!this.pdfDoc || this.pageDimensions.length === 0) return;
 
     // Column count (US2: T018)
+    // Swap width/height when user rotation is 90° or 270° so placeholder sizes
+    // match the rendered viewport and don't trigger a ResizeObserver loop.
+    const swapped = this._rotation % 180 !== 0;
     const containerWidth  = Math.max(1, this.scrollEl.clientWidth - 40);
-    const refPageWidthPx  = Math.max(...this.pageDimensions.map(d => d.width)) * this._scale;
+    const refPageWidthPx  = Math.max(...this.pageDimensions.map(d => swapped ? d.height : d.width)) * this._scale;
     this.columnCount = calculateColumnCount(containerWidth, refPageWidthPx, PAGE_GAP);
 
     // Build rows (US2: T019)
@@ -591,7 +594,10 @@ export class PdfViewer {
       for (const pageNum of row) {
         const view = new PdfPageView(pageNum, this._toolState);
         const dim  = this.pageDimensions[pageNum - 1];
-        if (dim) view.setPlaceholderSize(dim.width * this._scale, dim.height * this._scale);
+        if (dim) view.setPlaceholderSize(
+          (swapped ? dim.height : dim.width) * this._scale,
+          (swapped ? dim.width : dim.height) * this._scale
+        );
         rowEl.appendChild(view.wrapper);
         this.pageViews.push(view);
       }
