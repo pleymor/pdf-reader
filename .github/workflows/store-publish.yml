@@ -70,10 +70,12 @@ jobs:
           $configPath = Join-Path $configDir "settings.json"
           [System.IO.File]::WriteAllText($configPath, $config, $utf8NoBom)
 
-          # Store ClientSecret in Windows Credential Manager (keyed by ClientId)
+          # Store ClientSecret in Windows Credential Manager
+          # msstore CLI uses target name "MicrosoftStoreCli:user={clientId}"
           $clientId = $env:MICROSOFT_STORE_CLIENT_ID
           $secret = $env:MICROSOFT_STORE_CLIENT_SECRET
-          cmdkey /generic:$clientId /user:$clientId /pass:$secret
+          $target = "MicrosoftStoreCli:user=$clientId"
+          cmdkey /generic:$target /user:$clientId /pass:$secret
 
           # Submit
           $version = "${{ steps.version.outputs.version }}"
