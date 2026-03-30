@@ -142,6 +142,7 @@ jobs:
           New-Item -ItemType Directory -Path $configDir -Force | Out-Null
           @{
             TenantId     = $env:MICROSOFT_STORE_TENANT_ID
+            SellerId     = "92945690"
             ClientId     = $env:MICROSOFT_STORE_CLIENT_ID
             ClientSecret = $env:MICROSOFT_STORE_CLIENT_SECRET
           } | ConvertTo-Json | Set-Content "$configDir\config.json" -Encoding utf8
