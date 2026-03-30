@@ -317,6 +317,24 @@ export class CanvasOverlay {
     return null;
   }
 
+  /** Remaps a canvas-space handle to the PDF-space handle that accounts for
+   *  the current viewport rotation, so startResize/applyResize always anchor
+   *  the correct PDF edge and resize the correct PDF dimension.
+   *
+   *  At rotation 0 the mapping is identity.  At 90° the canvas up direction
+   *  corresponds to PDF x+ (east), canvas right to PDF y+ (north), etc.
+   *  Only applied for rect/circle annotations; text uses e/w exclusively. */
+  private effectiveHandle(h: ResizeHandle): ResizeHandle {
+    const rot = ((this.viewportRotation % 360) + 360) % 360;
+    if (rot === 0) return h;
+    const maps: Record<number, Record<ResizeHandle, ResizeHandle>> = {
+       90: { n:"w",  ne:"nw", e:"n",  se:"ne", s:"e",  sw:"se", w:"s",  nw:"sw" },
+      180: { n:"s",  ne:"sw", e:"w",  se:"nw", s:"n",  sw:"ne", w:"e",  nw:"se" },
+      270: { n:"e",  ne:"se", e:"s",  se:"sw", s:"w",  sw:"nw", w:"n",  nw:"ne" },
+    };
+    return maps[rot]?.[h] ?? h;
+  }
+
   /** Compute fixed-edge anchors in PDF pts for the given handle. */
   private startResize(ann: Annotation, handle: ResizeHandle): void {
     this.resizing      = true;
@@ -327,23 +345,29 @@ export class CanvasOverlay {
     this.dragOrigW     = ann.width;
     this.dragOrigH     = ann.kind !== "text" ? ann.height : 0;
 
+    // For rect/circle, remap the canvas-space handle to PDF-space so the
+    // correct edge is anchored when the viewport is rotated.
+    const eh = ann.kind !== "text" ? this.effectiveHandle(handle) : handle;
+
     // anchorX = the FIXED x edge (left or right) in PDF pts
     const left   = ann.x;
     const right  = ann.x + ann.width;
     const bottom = ann.y;
     const top    = ann.kind !== "text" ? ann.y + ann.height : ann.y;
 
-    if (["e", "ne", "se"].includes(handle)) this.resizeAnchorX = left;
-    else if (["w", "nw", "sw"].includes(handle)) this.resizeAnchorX = right;
+    if (["e", "ne", "se"].includes(eh)) this.resizeAnchorX = left;
+    else if (["w", "nw", "sw"].includes(eh)) this.resizeAnchorX = right;
 
     // anchorY = the FIXED y edge (top or bottom) in PDF pts
-    if (["n", "ne", "nw"].includes(handle)) this.resizeAnchorY = bottom;
-    else if (["s", "se", "sw"].includes(handle)) this.resizeAnchorY = top;
+    if (["n", "ne", "nw"].includes(eh)) this.resizeAnchorY = bottom;
+    else if (["s", "se", "sw"].includes(eh)) this.resizeAnchorY = top;
   }
 
   private applyResize(mouseX: number, mouseY: number): void {
     const ann = this.dragTarget!;
-    const h   = this.resizeHandle!;
+    const h   = ann.kind !== "text"
+      ? this.effectiveHandle(this.resizeHandle!)
+      : this.resizeHandle!;
     const [mx, my] = this.toPdf(mouseX, mouseY);
     const M   = MIN_SIZE_PT;
 

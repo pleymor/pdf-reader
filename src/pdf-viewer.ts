@@ -237,9 +237,11 @@ export class PdfPageView {
       start: number;
       end: number;
       text: string;
-      left: number;
-      top: number;
+      pivotX: number;   // canvas x of text origin (= CSS left)
+      pivotY: number;   // canvas y of text origin (= CSS top + fontSize)
+      top: number;      // CSS top (used for line-break detection only)
       fontSize: number;
+      angle: number;    // CSS rotation in degrees (from transform:rotate())
     }
     type Rect = { left: number; top: number; right: number; bottom: number };
 
@@ -251,21 +253,25 @@ export class PdfPageView {
     for (const span of this.textLayer.querySelectorAll("span") as NodeListOf<HTMLSpanElement>) {
       const text = span.textContent ?? "";
       if (!text) continue;
-      const spanTop = parseFloat(span.style.top) || 0;
+      const spanTop  = parseFloat(span.style.top)      || 0;
+      const fontSize = parseFloat(span.style.fontSize) || 12;
       if (combined.length > 0 && Math.abs(spanTop - prevTop) > 2) {
         lineBreakPos.add(combined.length);
         combined += " ";
       }
       const start = combined.length;
       combined += text;
+      const rotMatch = /rotate\(([+-]?\d+(?:\.\d+)?)deg\)/.exec(span.style.transform || "");
       entries.push({
         span,
         start,
         end: combined.length,
         text,
-        left:     parseFloat(span.style.left)     || 0,
+        pivotX:   parseFloat(span.style.left) || 0,
+        pivotY:   spanTop + fontSize,   // transform-origin is 0% 100% = bottom-left
         top:      spanTop,
-        fontSize: parseFloat(span.style.fontSize) || 12,
+        fontSize,
+        angle:    rotMatch ? parseFloat(rotMatch[1]) : 0,
       });
       prevTop = spanTop;
     }
@@ -276,9 +282,29 @@ export class PdfPageView {
         if (e.end <= urlStart || e.start >= urlEnd) continue;
         const urlL = Math.max(e.start, urlStart) - e.start;
         const urlR = Math.min(e.end,   urlEnd)   - e.start;
-        const clipL = e.left + measure(e.text.slice(0, urlL), e.span);
-        const clipR = e.left + measure(e.text.slice(0, urlR), e.span);
-        if (clipR > clipL) rects.push({ left: clipL, top: e.top, right: clipR, bottom: e.top + e.fontSize });
+        const dxL = measure(e.text.slice(0, urlL), e.span);
+        const dxR = measure(e.text.slice(0, urlR), e.span);
+        if (dxR <= dxL) continue;
+        if (Math.abs(e.angle) < 0.5) {
+          // No rotation — simple horizontal rect.
+          rects.push({ left: e.pivotX + dxL, top: e.pivotY - e.fontSize,
+                       right: e.pivotX + dxR, bottom: e.pivotY });
+        } else {
+          // Rotate the 4 corners of the URL sub-rect around the pivot and
+          // return the axis-aligned bounding box.
+          const θ = e.angle * Math.PI / 180;
+          const cos = Math.cos(θ), sin = Math.sin(θ);
+          // corners relative to pivot (pivotX, pivotY):
+          //   x axis = text advance direction, y axis = up (−fontSize)
+          const corners: [number, number][] = [
+            [dxL, -e.fontSize], [dxR, -e.fontSize],
+            [dxR, 0],           [dxL, 0],
+          ];
+          const xs = corners.map(([x, y]) => e.pivotX + cos * x - sin * y);
+          const ys = corners.map(([x, y]) => e.pivotY + sin * x + cos * y);
+          rects.push({ left: Math.min(...xs), right: Math.max(...xs),
+                       top:  Math.min(...ys), bottom: Math.max(...ys) });
+        }
       }
       return rects;
     };
@@ -673,14 +699,23 @@ export class PdfViewer {
 
   private async _renderPage(pageView: PdfPageView): Promise<void> {
     if (!this.pdfDoc) return;
+    const expectedScale    = this._scale;
+    const expectedRotation = this._rotation;
     await pageView.render(
       this.pdfDoc,
-      this._scale,
-      this._rotation,
+      expectedScale,
+      expectedRotation,
       this._store,
       this._formValues,
       this._onFormChange
     );
+    // If scale/rotation changed while this render was running (e.g. the user
+    // zoomed again before the previous render finished), the render that just
+    // completed used a stale scale and its setPlaceholderSize() call left the
+    // wrapper at the wrong size.  Re-render immediately at the current values.
+    if (this._scale !== expectedScale || this._rotation !== expectedRotation) {
+      void this._renderPage(pageView);
+    }
   }
 
   // ── Navigation (T015) ────────────────────────────────────────────────────────
@@ -728,6 +763,10 @@ export class PdfViewer {
           );
           view.rendered = false;
         }
+        this.onLayoutChangedCb?.(this.pageViews);
+        // Scroll first so getBoundingClientRect() below reflects the final
+        // scroll position — pages visible *after* the scroll get renders too.
+        this.goToPage(savedPage, "instant");
         const scrollRect = this.scrollEl.getBoundingClientRect();
         for (const view of this.pageViews) {
           const r = view.wrapper.getBoundingClientRect();
@@ -735,8 +774,6 @@ export class PdfViewer {
             void this._renderPage(view);
           }
         }
-        this.onLayoutChangedCb?.(this.pageViews);
-        this.goToPage(savedPage, "instant");
         return;
       }
     }

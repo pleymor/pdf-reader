@@ -1,6 +1,7 @@
 ﻿# pdf-reader Development Guidelines
 
 Auto-generated from all feature plans. Last updated: 2026-03-25
+Don't push without explicit demand
 
 ## Active Technologies
 - TypeScript 5.x (frontend), Rust stable ≥1.77 (backend — unchanged) + pdfjs-dist (PDF rendering), Tauri v2 (desktop shell), CanvasOverlay (internal annotation system) (005-continuous-flex-layout)

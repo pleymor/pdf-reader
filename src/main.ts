@@ -25,6 +25,7 @@ import {
   printPages,
 } from "./tauri-bridge";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { tempDir, basename } from "@tauri-apps/api/path";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 // ── Zoom levels ───────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ let filePath: string | null = null;
 let outputPath: string | null = null;
 let displayFilePath: string | null = null;
 let isDirty = false;
+let guardRegistering = false;
 let pendingSignature: string | null = null;
 let editingTextAnn:  TextAnnotation | null = null;
 let editingShapeAnn: RectAnnotation | CircleAnnotation | null = null;
@@ -189,12 +191,27 @@ function setDirty(val: boolean): void {
 }
 
 async function registerCloseGuard(): Promise<void> {
-  if (unlistenClose) return;
-  unlistenClose = await appWindow.onCloseRequested(async (event) => {
-    event.preventDefault();
-    const ok = await ask("Close without saving?", { title: "Unsaved changes", kind: "warning" });
-    if (ok) { unlistenClose?.(); unlistenClose = null; await appWindow.destroy(); }
-  });
+  // guardRegistering is a synchronous flag that prevents a second async call
+  // from registering a second listener before the first await resolves.
+  if (unlistenClose || guardRegistering) return;
+  guardRegistering = true;
+  try {
+    unlistenClose = await appWindow.onCloseRequested(async (event) => {
+      // Re-check isDirty: may have been cleared (e.g. save) before this listener
+      // finished registering, or by a concurrent "yes" click.
+      if (!isDirty) { return; /* no preventDefault → window closes normally */ }
+      event.preventDefault();
+      const ok = await ask("Close without saving?", { title: "Unsaved changes", kind: "warning" });
+      if (ok) {
+        // Set isDirty=false BEFORE close() so that if close() re-triggers this
+        // handler, the !isDirty guard above returns early instead of looping.
+        setDirty(false);
+        await appWindow.close();
+      }
+    });
+  } finally {
+    guardRegistering = false;
+  }
 }
 
 function unregisterCloseGuard(): void {
@@ -257,7 +274,9 @@ async function loadPdf(path: string): Promise<void> {
 
     let loadPath = path;
     if (saved.length > 0) {
-      const dp = path + ".display.pdf";
+      const tmp  = await tempDir();
+      const base = await basename(path);
+      const dp   = `${tmp}pdf-reader-display-${base}`;
       await stripAnnotationStreams(path, dp);
       displayFilePath = dp;
       loadPath = dp;
