@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PDF Reader",
+  "productName": "PDF Rider",
   "version": "0.2.4",
-  "identifier": "com.pdfreader.app",
+  "identifier": "com.pdfrider.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "PDF Reader",
+        "title": "PDF Rider",
         "width": 1280,
         "height": 800,
         "resizable": true,
@@ -32,7 +32,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "msix"],
+    "publisher": "Pleymor",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,6 +41,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "publisherName": "CN=B79D1225-9D8B-4940-8036-D7FDBD5EA2D3",
+      "upgradeCode": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70"
+    },
     "fileAssociations": [
       {
         "ext": ["pdf"],
