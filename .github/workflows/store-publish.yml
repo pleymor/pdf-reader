@@ -63,6 +63,6 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          msstore publish `
-            --inputDirectory . `
-            --appId 9NJD0V2MC740
+          $msixFile = "pdf-rider-${version}-win-x64.msix"
+          Write-Host "Submitting $msixFile to Microsoft Store..."
+          msstore publish $msixFile --appId 9NJD0V2MC740

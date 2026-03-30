@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msix"],
+    "targets": ["nsis"],
     "publisher": "Pleymor",
     "icon": [
       "icons/32x32.png",
@@ -42,8 +42,9 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "publisherName": "CN=B79D1225-9D8B-4940-8036-D7FDBD5EA2D3",
-      "upgradeCode": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70"
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
     },
     "fileAssociations": [
       {
