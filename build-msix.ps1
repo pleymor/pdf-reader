@@ -108,7 +108,8 @@ $manifestPath = Resolve-Path ".\src-tauri\AppxManifest.xml"
 $outPath = Join-Path (Resolve-Path $PackageDir).Path "AppxManifest.xml"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $manifest = [System.IO.File]::ReadAllText($manifestPath.Path, $utf8NoBom)
-$manifest = $manifest -replace 'Version="[^"]*"', "Version=`"$Version`""
+# Case-sensitive replace to avoid touching <?xml version="1.0"...>
+$manifest = $manifest -creplace 'Version="[\d\.]+"', "Version=`"$Version`""
 [System.IO.File]::WriteAllText($outPath, $manifest, $utf8NoBom)
 
 # Step 6: Create MSIX package
