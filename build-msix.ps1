@@ -109,7 +109,8 @@ $outPath = Join-Path (Resolve-Path $PackageDir).Path "AppxManifest.xml"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $manifest = [System.IO.File]::ReadAllText($manifestPath.Path, $utf8NoBom)
 # Case-sensitive replace to avoid touching <?xml version="1.0"...>
-$manifest = $manifest -creplace 'Version="[\d\.]+"', "Version=`"$Version`""
+# Only replace the Identity Version="0.0.0.0", not MinVersion/MaxVersionTested
+$manifest = $manifest -creplace 'Version="0\.0\.0\.0"', "Version=`"$Version`""
 [System.IO.File]::WriteAllText($outPath, $manifest, $utf8NoBom)
 
 # Step 6: Create MSIX package
