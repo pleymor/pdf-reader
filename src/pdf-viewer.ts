@@ -581,6 +581,7 @@ export class PdfViewer {
       this.pdfDoc = null;
     }
     this.observer?.disconnect();
+    if (this._scrollHandler) { this.scrollEl.removeEventListener("scroll", this._scrollHandler); this._scrollHandler = null; }
 
     const loadingTask = pdfjs.getDocument(password ? { url, password } : { url });
     this.pdfDoc = await loadingTask.promise;
@@ -605,6 +606,7 @@ export class PdfViewer {
 
   buildLayout(): void {
     this.observer?.disconnect();
+    if (this._scrollHandler) { this.scrollEl.removeEventListener("scroll", this._scrollHandler); this._scrollHandler = null; }
     this.scrollEl.innerHTML = "";
     this.pageViews = [];
 
@@ -643,6 +645,7 @@ export class PdfViewer {
   // ── IntersectionObserver (T012) ──────────────────────────────────────────────
 
   private setupObserver(): void {
+    // IntersectionObserver for lazy rendering / clearing
     this.observer = new IntersectionObserver(
       (entries) => {
         const visiblePages = entries
@@ -650,29 +653,6 @@ export class PdfViewer {
           .map(e => parseInt((e.target as HTMLElement).dataset.page ?? "0"))
           .filter(Boolean);
 
-        // Track focused page (highest intersection ratio in top half)
-        let maxRatio = 0;
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          if (entry.intersectionRatio > maxRatio) {
-            maxRatio = entry.intersectionRatio;
-            const n = parseInt((entry.target as HTMLElement).dataset.page ?? "0");
-            if (n) {
-              this._focusedPage = n;
-              this._currentPage = n;
-            }
-          }
-        }
-        if (maxRatio > 0) {
-          this.scrollEl.dispatchEvent(
-            new CustomEvent("focused-page-changed", {
-              detail: { page: this._focusedPage },
-              bubbles: true,
-            })
-          );
-        }
-
-        // Render visible pages; clear pages far from viewport
         for (const entry of entries) {
           const pageNum  = parseInt((entry.target as HTMLElement).dataset.page ?? "0");
           const pageView = this.pageViews[pageNum - 1];
@@ -695,6 +675,41 @@ export class PdfViewer {
     );
 
     for (const pv of this.pageViews) this.observer.observe(pv.wrapper);
+
+    // Scroll listener for accurate current-page tracking
+    this._scrollHandler = () => this._updateFocusedPage();
+    this.scrollEl.addEventListener("scroll", this._scrollHandler, { passive: true });
+    // Run once to set initial focused page
+    this._updateFocusedPage();
+  }
+
+  private _scrollHandler: (() => void) | null = null;
+
+  private _updateFocusedPage(): void {
+    const scrollTop = this.scrollEl.scrollTop;
+    const viewportMid = scrollTop + this.scrollEl.clientHeight / 3;
+    let best = 1;
+    let bestDist = Infinity;
+    for (const pv of this.pageViews) {
+      const top = pv.wrapper.offsetTop;
+      const bottom = top + pv.wrapper.offsetHeight;
+      const mid = (top + bottom) / 2;
+      const dist = Math.abs(mid - viewportMid);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = pv.pageNum;
+      }
+    }
+    if (best !== this._focusedPage) {
+      this._focusedPage = best;
+      this._currentPage = best;
+      this.scrollEl.dispatchEvent(
+        new CustomEvent("focused-page-changed", {
+          detail: { page: best },
+          bubbles: true,
+        })
+      );
+    }
   }
 
   private async _renderPage(pageView: PdfPageView): Promise<void> {
@@ -726,8 +741,8 @@ export class PdfViewer {
     this.pageViews[clamped - 1]?.wrapper.scrollIntoView({ behavior, block: "start" });
   }
 
-  async nextPage(): Promise<void> { this.goToPage(this._currentPage + 1); }
-  async prevPage(): Promise<void> { this.goToPage(this._currentPage - 1); }
+  async nextPage(): Promise<void> { this.goToPage(this._currentPage + this.columnCount); }
+  async prevPage(): Promise<void> { this.goToPage(this._currentPage - this.columnCount); }
 
   // ── Zoom / Rotate / Reflow (T022-T026) ──────────────────────────────────────
 
@@ -822,6 +837,7 @@ export class PdfViewer {
 
   async close(): Promise<void> {
     this.observer?.disconnect();
+    if (this._scrollHandler) { this.scrollEl.removeEventListener("scroll", this._scrollHandler); this._scrollHandler = null; }
     this.resizeObserver?.disconnect();
     this.scrollEl.innerHTML = "";
     this.pageViews = [];

@@ -410,11 +410,11 @@ toolbar.on(async (e) => {
       break;
 
     case "page-prev":
-      if (viewer.isLoaded()) viewer.goToPage(viewer.currentPage - 1);
+      if (viewer.isLoaded()) viewer.goToPage(viewer.currentPage - viewer.columnCount);
       break;
 
     case "page-next":
-      if (viewer.isLoaded()) viewer.goToPage(viewer.currentPage + 1);
+      if (viewer.isLoaded()) viewer.goToPage(viewer.currentPage + viewer.columnCount);
       break;
 
     case "page-goto":
@@ -537,11 +537,11 @@ document.addEventListener("keydown", async (e) => {
     return;
   }
   if (!ctrl && (e.key === "ArrowRight" || e.key === "PageDown")) {
-    if (viewer.isLoaded()) { e.preventDefault(); viewer.goToPage(viewer.currentPage + 1); }
+    if (viewer.isLoaded()) { e.preventDefault(); viewer.goToPage(viewer.currentPage + viewer.columnCount); }
     return;
   }
   if (!ctrl && (e.key === "ArrowLeft" || e.key === "PageUp")) {
-    if (viewer.isLoaded()) { e.preventDefault(); viewer.goToPage(viewer.currentPage - 1); }
+    if (viewer.isLoaded()) { e.preventDefault(); viewer.goToPage(viewer.currentPage - viewer.columnCount); }
     return;
   }
 });
