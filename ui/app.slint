@@ -1,4 +1,13 @@
-import { VerticalBox, HorizontalBox, Button, Slider, ComboBox, ScrollView } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, Button, ScrollView, LineEdit, Spinner } from "std-widgets.slint";
+
+// Data model for a single page image in the viewer
+export struct PageData {
+    image: image,
+    width: length,
+    height: length,
+    page-num: int,
+    rendered: bool,
+}
 
 export component App inherits Window {
     title: "PDF Rider";
@@ -10,45 +19,160 @@ export component App inherits Window {
     callback open-file();
     callback zoom-in();
     callback zoom-out();
+    callback fit-width();
+    callback fit-height();
+    callback rotate();
+    callback page-prev();
+    callback page-next();
+    callback page-goto(int);
+    callback viewport-changed(length, length);
+    callback drop-file(string);
 
     // Properties bound from Rust
     in-out property <string> status-text: "No file open";
-    in-out property <image> current-page-image;
     in-out property <bool> has-document: false;
+    in-out property <[PageData]> pages: [];
+    in-out property <string> zoom-text: "150%";
+    in-out property <string> page-text: "1";
+    in-out property <int> page-count: 0;
+    in-out property <int> current-page: 1;
+    in-out property <bool> loading: false;
+    // Expose window dimensions to Rust
+    out property <float> viewer-width: self.width / 1px;
+    out property <float> viewer-height: self.height / 1px;
 
     VerticalBox {
-        // Toolbar
-        HorizontalBox {
+        padding: 0;
+        spacing: 0;
+
+        // ── Toolbar ──
+        Rectangle {
             height: 40px;
-            padding: 4px;
-            spacing: 4px;
+            background: #2d2d2d;
 
-            Button {
-                text: "Open";
-                clicked => { root.open-file(); }
-            }
-            Button {
-                text: "+";
-                clicked => { root.zoom-in(); }
-            }
-            Button {
-                text: "-";
-                clicked => { root.zoom-out(); }
-            }
-            Text {
-                text: root.status-text;
-                color: #cccccc;
-                vertical-alignment: center;
+            HorizontalBox {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 4px;
+                alignment: start;
+
+                // Open
+                Button {
+                    text: "Open";
+                    clicked => { root.open-file(); }
+                }
+
+                // Separator
+                Rectangle { width: 1px; background: #555; }
+
+                // Page navigation
+                Button {
+                    text: "\u{25C0}";
+                    enabled: root.current-page > 1;
+                    clicked => { root.page-prev(); }
+                }
+
+                page-input := LineEdit {
+                    width: 50px;
+                    text: root.page-text;
+                    accepted(text) => {
+                        root.page-goto(text.to-float());
+                    }
+                }
+
+                Text {
+                    text: "/ \{root.page-count}";
+                    color: #cccccc;
+                    vertical-alignment: center;
+                }
+
+                Button {
+                    text: "\u{25B6}";
+                    enabled: root.current-page < root.page-count;
+                    clicked => { root.page-next(); }
+                }
+
+                // Separator
+                Rectangle { width: 1px; background: #555; }
+
+                // Zoom controls
+                Button {
+                    text: "\u{2212}";
+                    clicked => { root.zoom-out(); }
+                }
+
+                zoom-display := Text {
+                    text: root.zoom-text;
+                    color: #cccccc;
+                    vertical-alignment: center;
+                    min-width: 40px;
+                    horizontal-alignment: center;
+                }
+
+                Button {
+                    text: "+";
+                    clicked => { root.zoom-in(); }
+                }
+
+                Button {
+                    text: "FW";
+                    clicked => { root.fit-width(); }
+                }
+
+                Button {
+                    text: "FH";
+                    clicked => { root.fit-height(); }
+                }
+
+                // Separator
+                Rectangle { width: 1px; background: #555; }
+
+                Button {
+                    text: "\u{21BB}";
+                    clicked => { root.rotate(); }
+                }
+
+                // Spacer
+                Rectangle { }
+
+                // Status
+                Text {
+                    text: root.status-text;
+                    color: #888888;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
             }
         }
 
-        // PDF viewer area
-        if root.has-document: ScrollView {
-            Image {
-                source: root.current-page-image;
-                image-fit: contain;
+        // ── PDF Viewer Area ──
+        if root.has-document: viewer-scroll := ScrollView {
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+
+                for page-data in root.pages: Rectangle {
+                    width: page-data.width;
+                    height: page-data.height;
+                    background: page-data.rendered ? #ffffff : #333333;
+                    horizontal-stretch: 0;
+
+                    if page-data.rendered: Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: page-data.image;
+                        image-fit: fill;
+                    }
+                    if !page-data.rendered: Text {
+                        text: "Page \{page-data.page-num}";
+                        color: #666666;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
             }
         }
+
         if !root.has-document: Rectangle {
             Text {
                 text: "Drop a PDF file here or click Open";
