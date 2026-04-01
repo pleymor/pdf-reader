@@ -2,8 +2,9 @@ use crate::annotation::{interaction::InteractionState, overlay, store::Annotatio
 use crate::pdf::writer;
 use crate::{App, PageData};
 use pdfium_render::prelude::*;
-use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 // ── Zoom levels (same as TypeScript version) ─────────────────────────────────
@@ -139,8 +140,8 @@ fn render_page_to_image(
     Some(Image::from_rgba8(pixel_buffer))
 }
 
-/// Build the full pages model with rendered images.
-fn build_rendered_pages(pdfium: &Pdfium, state: &ViewerState) -> ModelRc<PageData> {
+/// Build placeholders for all pages (no rendering yet).
+fn build_page_placeholders(state: &ViewerState) -> (ModelRc<PageData>, Rc<VecModel<PageData>>) {
     let items: Vec<PageData> = state
         .page_dims
         .iter()
@@ -151,36 +152,108 @@ fn build_rendered_pages(pdfium: &Pdfium, state: &ViewerState) -> ModelRc<PageDat
             } else {
                 (dim.width_pt, dim.height_pt)
             };
-
-            // Render up to 20 pages for responsiveness
-            let page_num = (i + 1) as u32;
-            let page_anns = state.annotations.get_for_page(page_num);
-            let image = if i < 20 {
-                state.file_path.as_ref().and_then(|path| {
-                    render_page_to_image(pdfium, path, i as u16, state.scale, state.rotation, page_anns)
-                })
-            } else {
-                None
-            };
-
-            let rendered = image.is_some();
             PageData {
-                image: image.unwrap_or_default(),
+                image: Image::default(),
                 width: w * state.scale,
                 height: h * state.scale,
                 page_num: (i + 1) as i32,
-                rendered,
+                rendered: false,
             }
         })
         .collect();
 
-    ModelRc::new(VecModel::from(items))
+    let vm = Rc::new(VecModel::from(items));
+    (ModelRc::from(vm.clone()), vm)
 }
 
-fn update_ui(pdfium: &Pdfium, state: &ViewerState, ui: &App) {
-    let model = build_rendered_pages(pdfium, state);
-    ui.set_pages(model);
+/// Render a single page and update the model in-place.
+fn render_single_page(
+    pdfium: &Pdfium,
+    state: &ViewerState,
+    vm: &VecModel<PageData>,
+    page_idx: usize,
+) {
+    if page_idx >= state.page_dims.len() { return; }
+    let page_num = (page_idx + 1) as u32;
+    let page_anns = state.annotations.get_for_page(page_num);
+    if let Some(path) = &state.file_path {
+        if let Some(img) = render_page_to_image(pdfium, path, page_idx as u16, state.scale, state.rotation, page_anns) {
+            let mut data = vm.row_data(page_idx).unwrap();
+            data.image = img;
+            data.rendered = true;
+            vm.set_row_data(page_idx, data);
+        }
+    }
+}
+
+/// Render visible pages (based on scroll position).
+fn render_visible_pages(
+    pdfium: &Pdfium,
+    state: &ViewerState,
+    vm: &VecModel<PageData>,
+    scroll_y: f32,
+    viewport_h: f32,
+) {
+    let gap = 8.0_f32;
+    let mut y = 0.0_f32;
+    for (i, dim) in state.page_dims.iter().enumerate() {
+        let h = if state.rotation == 90 || state.rotation == 270 {
+            dim.width_pt
+        } else {
+            dim.height_pt
+        };
+        let page_h = h * state.scale;
+        let page_bottom = y + page_h;
+
+        // Page is visible if it overlaps [scroll_y, scroll_y + viewport_h]
+        if page_bottom >= scroll_y - 200.0 && y <= scroll_y + viewport_h + 200.0 {
+            // Only render if not already rendered
+            if let Some(data) = vm.row_data(i) {
+                if !data.rendered {
+                    render_single_page(pdfium, state, vm, i);
+                }
+            }
+        }
+        y += page_h + gap;
+    }
+}
+
+/// Rebuild all pages (for zoom/rotation changes).
+fn rebuild_all_pages(
+    pdfium: &Pdfium,
+    state: &ViewerState,
+    ui: &App,
+) -> Rc<VecModel<PageData>> {
+    let (model_rc, vm) = build_page_placeholders(state);
+    ui.set_pages(model_rc);
     ui.set_zoom_text(format!("{}%", (state.scale * 100.0).round() as i32).into());
+
+    // Render visible pages
+    let scroll_y = ui.get_current_scroll_y();
+    let viewport_h = ui.get_viewer_height();
+    render_visible_pages(pdfium, state, &vm, scroll_y, viewport_h);
+    vm
+}
+
+/// Re-render only one page (for annotation changes).
+fn update_single_page(
+    pdfium: &Pdfium,
+    state: &ViewerState,
+    vm: &VecModel<PageData>,
+    page_num: u32,
+) {
+    let page_idx = (page_num - 1) as usize;
+    render_single_page(pdfium, state, vm, page_idx);
+}
+
+// Legacy wrapper — rebuilds everything. Used for zoom/rotation.
+fn update_ui(pdfium: &Pdfium, state: &ViewerState, ui: &App) {
+    let (model_rc, vm) = build_page_placeholders(state);
+    ui.set_pages(model_rc);
+    ui.set_zoom_text(format!("{}%", (state.scale * 100.0).round() as i32).into());
+    let scroll_y = ui.get_current_scroll_y();
+    let viewport_h = ui.get_viewer_height();
+    render_visible_pages(pdfium, state, &vm, scroll_y, viewport_h);
 }
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -192,12 +265,16 @@ pub fn setup(ui: &App) {
 
     let pdfium = Arc::new(Pdfium::new(bindings));
     let state = Arc::new(Mutex::new(ViewerState::default()));
+    // Shared page model (Rc because Slint is single-threaded)
+    let pages_vm: std::rc::Rc<std::cell::RefCell<Option<Rc<VecModel<PageData>>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
 
     // ── Open file ────────────────────────────────────────────────────────────
     {
         let ui_weak = ui.as_weak();
         let pdfium = pdfium.clone();
         let state = state.clone();
+        let pages_vm = pages_vm.clone();
         ui.on_open_file(move || {
             let Some(path) = rfd::FileDialog::new()
                 .add_filter("PDF", &["pdf", "PDF"])
@@ -223,7 +300,8 @@ pub fn setup(ui: &App) {
                     }
 
                     let s = state.lock().unwrap();
-                    update_ui(&pdfium, &s, &ui);
+                    let vm = rebuild_all_pages(&pdfium, &s, &ui);
+                    *pages_vm.borrow_mut() = Some(vm);
                     ui.set_page_count(page_count as i32);
                     ui.set_current_page(1);
                     ui.set_page_text("1".into());
@@ -434,13 +512,21 @@ pub fn setup(ui: &App) {
                 .map(|d| if s.rotation == 90 || s.rotation == 270 { d.width_pt } else { d.height_pt })
                 .unwrap_or(841.0);
             let scale = s.scale;
+            let is_text_tool = s.interaction.tool == crate::annotation::interaction::Tool::Text;
 
             if let Some(ann) = s.interaction.pointer_up(
                 page as u32, x, y, scale, page_height_pt,
             ) {
-                s.annotations.add(ann);
-                s.dirty = true;
-                update_ui(&pdfium, &s, &ui);
+                if is_text_tool {
+                    // Store pending text annotation, show dialog
+                    s.interaction.pending_text_ann = Some(ann);
+                    ui.set_text_input_value("".into());
+                    ui.set_show_text_input(true);
+                } else {
+                    s.annotations.add(ann);
+                    s.dirty = true;
+                    update_ui(&pdfium, &s, &ui);
+                }
             }
         });
     }
@@ -842,10 +928,85 @@ pub fn setup(ui: &App) {
         });
     }
 
-    // ── Scroll position tracking (poll every 150ms) ─────────────────────────
+    // ── Text input dialog ──────────────────────────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let pdfium = pdfium.clone();
+        let state = state.clone();
+        ui.on_text_input_submit(move |text| {
+            let ui = ui_weak.unwrap();
+            ui.set_show_text_input(false);
+            let mut s = state.lock().unwrap();
+            if let Some(mut ann) = s.interaction.pending_text_ann.take() {
+                if !text.is_empty() {
+                    if let crate::pdf::models::Annotation::Text(ref mut t) = ann {
+                        t.content = text.to_string();
+                    }
+                    s.annotations.add(ann);
+                    s.dirty = true;
+                    update_ui(&pdfium, &s, &ui);
+                }
+            }
+        });
+    }
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        ui.on_text_input_cancel(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_show_text_input(false);
+            let mut s = state.lock().unwrap();
+            s.interaction.pending_text_ann = None;
+        });
+    }
+
+    // ── Save As ──────────────────────────────────────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_save_file_as(move || {
+            let ui = ui_weak.unwrap();
+            let s = state.lock().unwrap();
+            let Some(src_path) = &s.file_path else { return };
+            let all_annotations = s.annotations.all();
+
+            let Some(dest) = rfd::FileDialog::new()
+                .add_filter("PDF", &["pdf"])
+                .set_title("Save As")
+                .set_file_name(
+                    src_path.file_name().unwrap_or_default().to_string_lossy().to_string()
+                )
+                .save_file()
+            else { return };
+
+            // Copy original file to destination first, then save annotations
+            if dest != *src_path {
+                if let Err(e) = std::fs::copy(src_path, &dest) {
+                    ui.set_status_text(SharedString::from(format!("Copy error: {}", e)));
+                    return;
+                }
+            }
+
+            match save_annotated_pdf(&dest, &all_annotations) {
+                Ok(()) => {
+                    ui.set_status_text(SharedString::from(format!(
+                        "Saved as {}",
+                        dest.file_name().unwrap_or_default().to_string_lossy()
+                    )));
+                }
+                Err(e) => {
+                    ui.set_status_text(SharedString::from(format!("Save error: {}", e)));
+                }
+            }
+        });
+    }
+
+    // ── Scroll position tracking + lazy rendering (poll every 150ms) ────────
+    {
+        let ui_weak = ui.as_weak();
+        let pdfium = pdfium.clone();
+        let state = state.clone();
+        let pages_vm = pages_vm.clone();
         let timer = Timer::default();
         timer.start(TimerMode::Repeated, std::time::Duration::from_millis(150), move || {
             let Some(ui) = ui_weak.upgrade() else { return };
@@ -857,8 +1018,13 @@ pub fn setup(ui: &App) {
                 ui.set_current_page(page);
                 ui.set_page_text(page.to_string().into());
             }
+
+            // Lazy render pages that became visible
+            if let Some(vm) = pages_vm.borrow().as_ref() {
+                let viewport_h = ui.get_viewer_height();
+                render_visible_pages(&pdfium, &s, vm, scroll_y, viewport_h);
+            }
         });
-        // Leak the timer so it lives for the app's lifetime
         std::mem::forget(timer);
     }
 }

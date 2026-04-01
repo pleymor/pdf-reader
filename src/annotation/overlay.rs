@@ -19,7 +19,7 @@ pub fn render_overlay(
         match ann {
             Annotation::Rect(r) => draw_rect(&mut pixmap, r, page_height_pt, scale),
             Annotation::Circle(c) => draw_circle(&mut pixmap, c, page_height_pt, scale),
-            Annotation::Text(t) => draw_text_placeholder(&mut pixmap, t, page_height_pt, scale),
+            Annotation::Text(t) => draw_text_annotation(&mut pixmap, t, page_height_pt, scale),
             Annotation::Signature(s) => draw_signature(&mut pixmap, s, page_height_pt, scale),
         }
     }
@@ -82,22 +82,43 @@ fn draw_circle(pixmap: &mut Pixmap, ann: &CircleAnnotation, page_h: f64, scale: 
     }
 }
 
-fn draw_text_placeholder(pixmap: &mut Pixmap, ann: &TextAnnotation, page_h: f64, scale: f64) {
-    // Phase 2: render a tinted rectangle as placeholder for text annotations.
-    // Full text rendering will be added later.
+fn draw_text_annotation(pixmap: &mut Pixmap, ann: &TextAnnotation, page_h: f64, scale: f64) {
     let (x, y) = pdf_to_canvas(ann.x, ann.y, page_h, scale);
     let font_size_px = (ann.font_size * scale) as f32;
     let line_h = font_size_px * 1.2;
-    let lines = ann.content.split('\n').count() as f32;
+    let lines = ann.content.split('\n').count().max(1) as f32;
     let w = (ann.width * scale) as f32;
     let h = lines * line_h;
 
-    if let Some(rect) = tiny_skia::Rect::from_xywh(x, y - line_h, w, h) {
-        let mut paint = Paint::default();
-        paint.set_color(Color::from_rgba8(ann.color.r, ann.color.g, ann.color.b, 60));
-        paint.anti_alias = true;
+    // Draw semi-transparent background
+    if let Some(rect) = tiny_skia::Rect::from_xywh(x, y, w, h) {
+        let mut bg_paint = Paint::default();
+        bg_paint.set_color(Color::from_rgba8(255, 255, 255, 180));
+        bg_paint.anti_alias = true;
         let path = PathBuilder::from_rect(rect);
-        pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(&path, &bg_paint, tiny_skia::FillRule::Winding, Transform::identity(), None);
+    }
+
+    // Draw border
+    if let Some(rect) = tiny_skia::Rect::from_xywh(x, y, w, h) {
+        let mut border_paint = Paint::default();
+        border_paint.set_color(Color::from_rgba8(ann.color.r, ann.color.g, ann.color.b, 150));
+        border_paint.anti_alias = true;
+        let stroke = Stroke { width: 1.0, ..Stroke::default() };
+        let path = PathBuilder::from_rect(rect);
+        pixmap.stroke_path(&path, &border_paint, &stroke, Transform::identity(), None);
+    }
+
+    // Draw colored line on the left edge as text color indicator
+    if h > 2.0 {
+        let mut pb = PathBuilder::new();
+        pb.move_to(x + 2.0, y + 2.0);
+        pb.line_to(x + 2.0, y + h - 2.0);
+        if let Some(path) = pb.finish() {
+            let paint = rgb_paint(&ann.color);
+            let stroke = Stroke { width: 3.0, ..Stroke::default() };
+            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        }
     }
 }
 

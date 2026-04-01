@@ -41,6 +41,8 @@ pub struct InteractionState {
     pub color: RgbColor,
     pub stroke_width: f64,
     pub font_size: f64,
+    // Pending text annotation (waiting for user input)
+    pub pending_text_ann: Option<Annotation>,
 }
 
 impl Default for InteractionState {
@@ -61,6 +63,7 @@ impl Default for InteractionState {
             color: RgbColor { r: 255, g: 0, b: 0 },
             stroke_width: 2.0,
             font_size: 14.0,
+            pending_text_ann: None,
         }
     }
 }

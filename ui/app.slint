@@ -1,4 +1,4 @@
-import { VerticalBox, HorizontalBox, Button, ScrollView, LineEdit, Spinner, SpinBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, Button, ScrollView, LineEdit, Spinner } from "std-widgets.slint";
 
 component IconButton inherits Rectangle {
     in property <image> icon;
@@ -55,6 +55,87 @@ component ToggleIconButton inherits Rectangle {
     }
 }
 
+component NumericInput inherits Rectangle {
+    in property <int> value;
+    in property <int> minimum: 1;
+    in property <int> maximum: 100;
+    callback changed(int);
+
+    width: 56px;
+    height: 26px;
+    border-radius: 4px;
+    background: #3a3a3a;
+    border-color: #555;
+    border-width: 1px;
+
+    HorizontalLayout {
+        padding: 0;
+        spacing: 0;
+
+        // Value display
+        Text {
+            text: "\{root.value}";
+            color: #ccc;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            min-width: 32px;
+        }
+
+        // Up/down arrows stacked vertically
+        VerticalLayout {
+            width: 18px;
+            spacing: 0;
+
+            // Up arrow
+            Rectangle {
+                height: 13px;
+                border-radius: 0;
+                background: up-ta.has-hover ? #555 : transparent;
+
+                Text {
+                    text: "+";
+                    color: #aaa;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                up-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if root.value < root.maximum {
+                            root.changed(root.value + 1);
+                        }
+                    }
+                }
+            }
+
+            // Down arrow
+            Rectangle {
+                height: 13px;
+                border-radius: 0;
+                background: down-ta.has-hover ? #555 : transparent;
+
+                Text {
+                    text: "\u{2212}";
+                    color: #aaa;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                down-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if root.value > root.minimum {
+                            root.changed(root.value - 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Data model for a single page image in the viewer
 export struct PageData {
     image: image,
@@ -74,6 +155,7 @@ export component App inherits Window {
     // Callbacks exposed to Rust
     callback open-file();
     callback save-file();
+    callback save-file-as();
     callback zoom-in();
     callback zoom-out();
     callback fit-width();
@@ -93,6 +175,11 @@ export component App inherits Window {
     callback page-drag-end(int, float, float);
     callback delete-selected();
     callback set-color(int, int, int);
+    // Text input dialog
+    callback text-input-submit(string);
+    callback text-input-cancel();
+    in-out property <bool> show-text-input: false;
+    in-out property <string> text-input-value: "";
     callback set-stroke-width(int);
     callback set-font-size(int);
     // Resize: (handle-index 0=NW 1=NE 2=SW 3=SE, page, x, y)
@@ -170,6 +257,13 @@ export component App inherits Window {
                     icon: @image-url("icons/save.svg");
                     enabled: root.has-document;
                     clicked => { root.save-file(); }
+                }
+
+                // Save As
+                IconButton {
+                    icon: @image-url("icons/save-as.svg");
+                    enabled: root.has-document;
+                    clicked => { root.save-file-as(); }
                 }
 
                 // Separator
@@ -304,9 +398,9 @@ export component App inherits Window {
                         {r: 100, g: 100, b: 100},
                         {r: 255, g: 255, b: 255},
                     ]: Rectangle {
-                        width: 18px;
-                        height: 18px;
-                        border-radius: 9px;
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
                         background: Colors.rgb(col.r, col.g, col.b);
                         border-color: col.r == root.cur-r && col.g == root.cur-g && col.b == root.cur-b ? #4d9eff : #666;
                         border-width: col.r == root.cur-r && col.g == root.cur-g && col.b == root.cur-b ? 2px : 1px;
@@ -322,13 +416,11 @@ export component App inherits Window {
                     spacing: 4px;
                     Rectangle { width: 2px; }
                     Text { text: "W:"; color: #aaa; vertical-alignment: center; }
-                    SpinBox {
-                        width: 75px;
-                        height: 28px;
+                    NumericInput {
+                        value: root.cur-stroke-width;
                         minimum: 1;
                         maximum: 20;
-                        value: root.cur-stroke-width;
-                        edited(val) => { root.set-stroke-width(val); }
+                        changed(val) => { root.set-stroke-width(val); }
                     }
                 }
 
@@ -337,13 +429,11 @@ export component App inherits Window {
                     spacing: 4px;
                     Rectangle { width: 2px; }
                     Text { text: "Sz:"; color: #aaa; vertical-alignment: center; }
-                    SpinBox {
-                        width: 75px;
-                        height: 28px;
+                    NumericInput {
+                        value: root.cur-font-size;
                         minimum: 6;
                         maximum: 72;
-                        value: root.cur-font-size;
-                        edited(val) => { root.set-font-size(val); }
+                        changed(val) => { root.set-font-size(val); }
                     }
                 }
 
@@ -471,6 +561,62 @@ export component App inherits Window {
                 font-size: 16px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
+            }
+        }
+    }
+
+    // ── Text input dialog (modal overlay) ──
+    if root.show-text-input: Rectangle {
+        background: #00000088;
+
+        TouchArea {
+            clicked => { root.text-input-cancel(); }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 400px;
+            height: 200px;
+            background: #2d2d2d;
+            border-radius: 8px;
+            border-color: #555;
+            border-width: 1px;
+
+            TouchArea { /* block click-through */ }
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+
+                Text {
+                    text: "Enter annotation text:";
+                    color: #cccccc;
+                    font-size: 14px;
+                }
+
+                text-edit := LineEdit {
+                    text: root.text-input-value;
+                    accepted(val) => {
+                        root.text-input-submit(val);
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+
+                    Button {
+                        text: "Cancel";
+                        clicked => { root.text-input-cancel(); }
+                    }
+                    Button {
+                        text: "OK";
+                        clicked => {
+                            root.text-input-submit(text-edit.text);
+                        }
+                    }
+                }
             }
         }
     }
