@@ -1393,40 +1393,67 @@ fn ann_type_str(ann: &crate::pdf::models::Annotation) -> &'static str {
     }
 }
 
-/// Re-render all strokes using Catmull-Rom spline interpolation for smooth curves.
+/// Re-render all strokes as smooth Catmull-Rom curves with uniform width.
 fn render_smooth_strokes(pixmap: &mut tiny_skia::Pixmap, strokes: &[Vec<(f32, f32)>]) {
     let mut paint = tiny_skia::Paint::default();
     paint.set_color(tiny_skia::Color::from_rgba8(15, 15, 35, 255));
     paint.anti_alias = true;
 
-    for points in strokes {
-        if points.len() < 2 { continue; }
+    for raw_points in strokes {
+        if raw_points.len() < 2 { continue; }
 
-        // For each consecutive pair of points, compute Catmull-Rom control points
-        // and draw a cubic Bezier curve with calligraphic width
-        let n = points.len();
+        // 1. Simplify: remove noise with Douglas-Peucker
+        let simplified = douglas_peucker(raw_points, 1.0);
+        if simplified.len() < 2 { continue; }
+
+        // 2. Smooth positions with moving average (2 passes, window 3)
+        let mut pts = simplified;
+        for _ in 0..2 {
+            pts = smooth_points(&pts, 3);
+        }
+        if pts.len() < 2 { continue; }
+
+        // 3. Compute per-segment width based on orientation, then smooth
+        let n = pts.len();
+        let mut raw_widths: Vec<f32> = Vec::with_capacity(n);
+        for i in 0..n {
+            let (dx, dy) = if i == 0 {
+                (pts[1].0 - pts[0].0, pts[1].1 - pts[0].1)
+            } else if i == n - 1 {
+                (pts[n - 1].0 - pts[n - 2].0, pts[n - 1].1 - pts[n - 2].1)
+            } else {
+                (pts[i + 1].0 - pts[i - 1].0, pts[i + 1].1 - pts[i - 1].1)
+            };
+            // vertical (|dy| >> |dx|) → thick, horizontal → thin
+            let len = (dx * dx + dy * dy).sqrt().max(0.001);
+            let verticality = (dy / len).abs(); // 0.0 = horizontal, 1.0 = vertical
+            let min_w = 1.2_f32;
+            let max_w = 7.5_f32;
+            raw_widths.push(min_w + verticality * (max_w - min_w));
+        }
+
+        // Smooth widths heavily to avoid abrupt transitions
+        let mut widths = raw_widths;
+        for _ in 0..4 {
+            widths = smooth_values_f(&widths, 7);
+        }
+
+        // 4. Draw segment by segment with varying width
         for i in 0..n - 1 {
-            let p0 = if i > 0 { points[i - 1] } else { points[i] };
-            let p1 = points[i];
-            let p2 = points[i + 1];
-            let p3 = if i + 2 < n { points[i + 2] } else { points[i + 1] };
+            let p0 = if i > 0 { pts[i - 1] } else { pts[i] };
+            let p1 = pts[i];
+            let p2 = pts[i + 1];
+            let p3 = if i + 2 < n { pts[i + 2] } else { pts[i + 1] };
 
-            // Catmull-Rom to cubic Bezier control points
             let cp1x = p1.0 + (p2.0 - p0.0) / 6.0;
             let cp1y = p1.1 + (p2.1 - p0.1) / 6.0;
             let cp2x = p2.0 - (p3.0 - p1.0) / 6.0;
             let cp2y = p2.1 - (p3.1 - p1.1) / 6.0;
 
-            // Calligraphic width based on angle
-            let dx = p2.0 - p1.0;
-            let dy = p2.1 - p1.1;
-            let angle = dy.atan2(dx);
-            let nib_angle = std::f32::consts::FRAC_PI_4;
-            let cross = (angle - nib_angle).sin().abs();
-            let width = 1.5 + cross * 5.0;
+            let w = (widths[i] + widths[i + 1]) * 0.5;
 
             let stroke = tiny_skia::Stroke {
-                width,
+                width: w,
                 line_cap: tiny_skia::LineCap::Round,
                 line_join: tiny_skia::LineJoin::Round,
                 ..tiny_skia::Stroke::default()
@@ -1440,6 +1467,115 @@ fn render_smooth_strokes(pixmap: &mut tiny_skia::Pixmap, strokes: &[Vec<(f32, f3
             }
         }
     }
+}
+
+/// Resample a polyline using Catmull-Rom interpolation.
+/// `subdivisions` = number of intermediate points between each original pair.
+fn catmull_rom_resample(points: &[(f32, f32)], subdivisions: usize) -> Vec<(f32, f32)> {
+    let n = points.len();
+    if n < 2 { return points.to_vec(); }
+
+    let mut result = Vec::with_capacity(n * (subdivisions + 1));
+
+    for i in 0..n - 1 {
+        let p0 = if i > 0 { points[i - 1] } else { points[i] };
+        let p1 = points[i];
+        let p2 = points[i + 1];
+        let p3 = if i + 2 < n { points[i + 2] } else { points[i + 1] };
+
+        result.push(p1);
+
+        for s in 1..=subdivisions {
+            let t = s as f32 / (subdivisions + 1) as f32;
+            let t2 = t * t;
+            let t3 = t2 * t;
+
+            let x = 0.5 * ((2.0 * p1.0)
+                + (-p0.0 + p2.0) * t
+                + (2.0 * p0.0 - 5.0 * p1.0 + 4.0 * p2.0 - p3.0) * t2
+                + (-p0.0 + 3.0 * p1.0 - 3.0 * p2.0 + p3.0) * t3);
+            let y = 0.5 * ((2.0 * p1.1)
+                + (-p0.1 + p2.1) * t
+                + (2.0 * p0.1 - 5.0 * p1.1 + 4.0 * p2.1 - p3.1) * t2
+                + (-p0.1 + 3.0 * p1.1 - 3.0 * p2.1 + p3.1) * t3);
+            result.push((x, y));
+        }
+    }
+    result.push(*points.last().unwrap());
+    result
+}
+
+/// Douglas-Peucker polyline simplification.
+fn douglas_peucker(points: &[(f32, f32)], epsilon: f32) -> Vec<(f32, f32)> {
+    let n = points.len();
+    if n <= 2 { return points.to_vec(); }
+
+    // Find the point farthest from the line (first, last)
+    let (ax, ay) = points[0];
+    let (bx, by) = points[n - 1];
+    let line_len = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt().max(0.001);
+
+    let mut max_dist = 0.0_f32;
+    let mut max_idx = 0;
+    for i in 1..n - 1 {
+        let (px, py) = points[i];
+        let dist = ((by - ay) * px - (bx - ax) * py + bx * ay - by * ax).abs() / line_len;
+        if dist > max_dist {
+            max_dist = dist;
+            max_idx = i;
+        }
+    }
+
+    if max_dist > epsilon {
+        let mut left = douglas_peucker(&points[..=max_idx], epsilon);
+        let right = douglas_peucker(&points[max_idx..], epsilon);
+        left.pop(); // avoid duplicate at split point
+        left.extend(right);
+        left
+    } else {
+        vec![points[0], points[n - 1]]
+    }
+}
+
+/// Smooth point positions with moving average.
+fn smooth_points(points: &[(f32, f32)], window: usize) -> Vec<(f32, f32)> {
+    let n = points.len();
+    if n <= 2 { return points.to_vec(); }
+    let half = window / 2;
+    let mut result = Vec::with_capacity(n);
+    // Keep first and last point fixed
+    result.push(points[0]);
+    for i in 1..n - 1 {
+        let start = i.saturating_sub(half);
+        let end = (i + half + 1).min(n);
+        let count = (end - start) as f32;
+        let mut sx = 0.0_f32;
+        let mut sy = 0.0_f32;
+        for j in start..end {
+            sx += points[j].0;
+            sy += points[j].1;
+        }
+        result.push((sx / count, sy / count));
+    }
+    result.push(points[n - 1]);
+    result
+}
+
+/// Smooth a sequence of float values with moving average, keeping first/last fixed.
+fn smooth_values_f(values: &[f32], window: usize) -> Vec<f32> {
+    let n = values.len();
+    if n <= 2 { return values.to_vec(); }
+    let half = window / 2;
+    let mut result = Vec::with_capacity(n);
+    result.push(values[0]);
+    for i in 1..n - 1 {
+        let start = i.saturating_sub(half);
+        let end = (i + half + 1).min(n);
+        let sum: f32 = values[start..end].iter().sum();
+        result.push(sum / (end - start) as f32);
+    }
+    result.push(values[n - 1]);
+    result
 }
 
 fn update_sig_image(ui: &App, pixmap: &tiny_skia::Pixmap) {
