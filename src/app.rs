@@ -1,3 +1,5 @@
+use crate::annotation::{overlay, store::AnnotationStore};
+use crate::pdf::writer;
 use crate::{App, PageData};
 use pdfium_render::prelude::*;
 use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
@@ -43,6 +45,7 @@ struct ViewerState {
     page_count: u16,
     scale: f32,
     rotation: i32, // 0, 90, 180, 270
+    annotations: AnnotationStore,
 }
 
 impl Default for ViewerState {
@@ -53,6 +56,7 @@ impl Default for ViewerState {
             page_count: 0,
             scale: 1.5,
             rotation: 0,
+            annotations: AnnotationStore::default(),
         }
     }
 }
@@ -65,6 +69,7 @@ fn render_page_to_image(
     page_index: u16,
     scale: f32,
     rotation: i32,
+    annotations: &[crate::pdf::models::Annotation],
 ) -> Option<Image> {
     let doc = pdfium.load_pdf_from_file(path, None).ok()?;
     let page = doc.pages().get(page_index).ok()?;
@@ -75,6 +80,8 @@ fn render_page_to_image(
         270 => Some(PdfPageRenderRotation::Degrees270),
         _ => None,
     };
+
+    let page_height_pt = page.height().value as f64;
 
     let (page_w, page_h) = if rotation == 90 || rotation == 270 {
         (page.height().value, page.width().value)
@@ -95,8 +102,32 @@ fn render_page_to_image(
 
     let bitmap = page.render_with_config(&config).ok()?;
     let img = bitmap.as_image();
-    let rgba = img.to_rgba8();
+    let mut rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
+
+    // Composite annotation overlay if any
+    if !annotations.is_empty() {
+        if let Some(overlay_pixmap) = overlay::render_overlay(
+            annotations,
+            w,
+            h,
+            page_height_pt,
+            scale as f64,
+        ) {
+            let overlay_data = overlay_pixmap.data();
+            let base = rgba.as_mut();
+            // Alpha-blend overlay onto base
+            for i in (0..base.len()).step_by(4) {
+                let sa = overlay_data[i + 3] as u32;
+                if sa == 0 { continue; }
+                let da = 255 - sa;
+                base[i]     = ((overlay_data[i] as u32 * sa + base[i] as u32 * da) / 255) as u8;
+                base[i + 1] = ((overlay_data[i + 1] as u32 * sa + base[i + 1] as u32 * da) / 255) as u8;
+                base[i + 2] = ((overlay_data[i + 2] as u32 * sa + base[i + 2] as u32 * da) / 255) as u8;
+                base[i + 3] = (sa + base[i + 3] as u32 * da / 255) as u8;
+            }
+        }
+    }
 
     let mut pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::new(w, h);
     pixel_buffer.make_mut_bytes().copy_from_slice(&rgba);
@@ -118,9 +149,11 @@ fn build_rendered_pages(pdfium: &Pdfium, state: &ViewerState) -> ModelRc<PageDat
             };
 
             // Render up to 20 pages for responsiveness
+            let page_num = (i + 1) as u32;
+            let page_anns = state.annotations.get_for_page(page_num);
             let image = if i < 20 {
                 state.file_path.as_ref().and_then(|path| {
-                    render_page_to_image(pdfium, path, i as u16, state.scale, state.rotation)
+                    render_page_to_image(pdfium, path, i as u16, state.scale, state.rotation, page_anns)
                 })
             } else {
                 None
@@ -173,14 +206,16 @@ pub fn setup(ui: &App) {
 
             let ui = ui_weak.unwrap();
             match load_document(&pdfium, &path) {
-                Ok(dims) => {
-                    let page_count = dims.len() as u16;
+                Ok(loaded) => {
+                    let page_count = loaded.dims.len() as u16;
+                    let ann_count = loaded.annotations.len();
                     {
                         let mut s = state.lock().unwrap();
                         s.file_path = Some(path.clone());
-                        s.page_dims = dims;
+                        s.page_dims = loaded.dims;
                         s.page_count = page_count;
                         s.rotation = 0;
+                        s.annotations.load(loaded.annotations);
                     }
 
                     let s = state.lock().unwrap();
@@ -189,11 +224,21 @@ pub fn setup(ui: &App) {
                     ui.set_current_page(1);
                     ui.set_page_text("1".into());
                     ui.set_has_document(true);
-                    ui.set_status_text(SharedString::from(format!(
-                        "{} — {} pages",
-                        path.file_name().unwrap_or_default().to_string_lossy(),
-                        page_count
-                    )));
+                    let status = if ann_count > 0 {
+                        format!(
+                            "{} — {} pages, {} annotations",
+                            path.file_name().unwrap_or_default().to_string_lossy(),
+                            page_count,
+                            ann_count
+                        )
+                    } else {
+                        format!(
+                            "{} — {} pages",
+                            path.file_name().unwrap_or_default().to_string_lossy(),
+                            page_count
+                        )
+                    };
+                    ui.set_status_text(SharedString::from(status));
                 }
                 Err(e) => {
                     ui.set_status_text(format!("Error: {}", e).into());
@@ -386,7 +431,12 @@ fn scroll_to_page(ui: &App, state: &ViewerState, page: i32) {
     ui.invoke_scroll_to(-y);
 }
 
-fn load_document(pdfium: &Pdfium, path: &std::path::Path) -> Result<Vec<PageDim>, String> {
+struct LoadedDoc {
+    dims: Vec<PageDim>,
+    annotations: Vec<crate::pdf::models::Annotation>,
+}
+
+fn load_document(pdfium: &Pdfium, path: &std::path::Path) -> Result<LoadedDoc, String> {
     let doc = pdfium
         .load_pdf_from_file(path, None)
         .map_err(|e| format!("{}", e))?;
@@ -403,5 +453,12 @@ fn load_document(pdfium: &Pdfium, path: &std::path::Path) -> Result<Vec<PageDim>
         });
     }
 
-    Ok(dims)
+    // Load annotations from PDF metadata (CCAnnot)
+    let lopdf_doc = lopdf::Document::load(path).unwrap_or_default();
+    let meta = writer::load_meta(&lopdf_doc);
+
+    Ok(LoadedDoc {
+        dims,
+        annotations: meta.annotations,
+    })
 }
