@@ -4,6 +4,7 @@
 mod annotation;
 mod app;
 mod pdf;
+mod viewer;
 
 slint::include_modules!();
 

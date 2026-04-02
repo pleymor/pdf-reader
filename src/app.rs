@@ -1,6 +1,7 @@
 use crate::annotation::{interaction::InteractionState, overlay, store::AnnotationStore};
+use crate::viewer::{links, text_selection};
 use crate::pdf::writer;
-use crate::{App, PageData};
+use crate::{App, PageData, TextSelRect};
 use pdfium_render::prelude::*;
 use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 use std::path::PathBuf;
@@ -1201,6 +1202,169 @@ pub fn setup(ui: &App) {
                 }
             }
         });
+    }
+
+    // ── Text selection (read-only mode) ────────────────────────────────────
+    {
+        // Cache char boxes per page
+        let text_cache: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<u16, Vec<text_selection::CharBox>>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new()));
+        let link_cache: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<u16, Vec<links::LinkBox>>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new()));
+        let text_sel_start: std::rc::Rc<std::cell::Cell<(f32, f32)>> =
+            std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0)));
+        let selected_text: std::rc::Rc<std::cell::RefCell<String>> =
+            std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+
+        {
+            let ui_weak = ui.as_weak();
+            let text_sel_start = text_sel_start.clone();
+            ui.on_text_select_start(move |_page, x, y| {
+                let ui = ui_weak.unwrap();
+                text_sel_start.set((x, y));
+                ui.set_has_text_selection(false);
+            });
+        }
+        // Helper to ensure char cache is populated for a page
+        fn ensure_char_cache(
+            cache: &mut std::collections::HashMap<u16, Vec<text_selection::CharBox>>,
+            pdfium: &Pdfium,
+            state: &ViewerState,
+            page_idx: u16,
+        ) {
+            if cache.contains_key(&page_idx) { return; }
+            if let Some(path) = &state.file_path {
+                let page_height_pt = state.page_dims.get(page_idx as usize)
+                    .map(|d| if state.rotation == 90 || state.rotation == 270 { d.width_pt } else { d.height_pt })
+                    .unwrap_or(841.0);
+                let chars = text_selection::extract_char_boxes(
+                    pdfium, path, page_idx, state.scale, page_height_pt,
+                );
+                cache.insert(page_idx, chars);
+            }
+        }
+
+        {
+            let ui_weak = ui.as_weak();
+            let pdfium = pdfium.clone();
+            let state = state.clone();
+            let text_cache = text_cache.clone();
+            let text_sel_start = text_sel_start.clone();
+            let selected_text = selected_text.clone();
+            ui.on_text_select_move(move |page, x, y| {
+                let ui = ui_weak.unwrap();
+                let (sx, sy) = text_sel_start.get();
+                if (x - sx).abs() < 5.0 && (y - sy).abs() < 5.0 { return; }
+
+                let s = state.lock().unwrap();
+                let page_idx = (page - 1) as u16;
+                let mut cache = text_cache.borrow_mut();
+                ensure_char_cache(&mut cache, &pdfium, &s, page_idx);
+
+                if let Some(chars) = cache.get(&page_idx) {
+                    let (text, rects) = text_selection::select_text(chars, sx, sy, x, y);
+                    if !rects.is_empty() {
+                        ui.set_has_text_selection(true);
+                        ui.set_text_sel_page(page);
+                        let rect_model: Vec<_> = rects.iter().map(|&(rx, ry, rw, rh)| {
+                            TextSelRect { x: rx, y: ry, w: rw, h: rh }
+                        }).collect();
+                        ui.set_text_sel_rects(slint::ModelRc::new(slint::VecModel::from(rect_model)));
+                        *selected_text.borrow_mut() = text;
+                    }
+                }
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let text_sel_start = text_sel_start.clone();
+            let link_cache = link_cache.clone();
+            ui.on_text_select_end(move |page, x, y| {
+                let ui = ui_weak.unwrap();
+                let (sx, sy) = text_sel_start.get();
+                if (x - sx).abs() < 5.0 && (y - sy).abs() < 5.0 {
+                    // It was a click — check for link
+                    ui.set_has_text_selection(false);
+                    let page_idx = (page - 1) as u16;
+                    let lcache = link_cache.borrow();
+                    if let Some(page_links) = lcache.get(&page_idx) {
+                        if let Some(link) = links::link_at(page_links, x, y) {
+                            let _ = open::that(&link.url);
+                        }
+                    }
+                }
+            });
+        }
+        // Hover: determine cursor type (text vs pointer for links)
+        {
+            let ui_weak = ui.as_weak();
+            let pdfium = pdfium.clone();
+            let state = state.clone();
+            let text_cache = text_cache.clone();
+            let link_cache = link_cache.clone();
+            ui.on_page_hover(move |page, x, y| {
+                let ui = ui_weak.unwrap();
+                let s = state.lock().unwrap();
+                let page_idx = (page - 1) as u16;
+
+                // Ensure link cache is populated
+                let mut lcache = link_cache.borrow_mut();
+                if !lcache.contains_key(&page_idx) {
+                    let page_height_pt = s.page_dims.get(page_idx as usize)
+                        .map(|d| if s.rotation == 90 || s.rotation == 270 { d.width_pt } else { d.height_pt })
+                        .unwrap_or(841.0);
+                    let mut all_links = Vec::new();
+                    if let Some(path) = &s.file_path {
+                        all_links = links::extract_page_links(&pdfium, path, page_idx, s.scale, page_height_pt);
+                    }
+                    let mut tcache = text_cache.borrow_mut();
+                    ensure_char_cache(&mut tcache, &pdfium, &s, page_idx);
+                    if let Some(chars) = tcache.get(&page_idx) {
+                        all_links.extend(links::detect_text_urls(chars, s.scale));
+                    }
+                    lcache.insert(page_idx, all_links);
+                }
+
+                // Update link overlay rects for this page (for pointer cursor)
+                if ui.get_link_rects_page() != page {
+                    if let Some(page_links) = lcache.get(&page_idx) {
+                        let rect_model: Vec<TextSelRect> = page_links.iter().map(|l| {
+                            TextSelRect { x: l.left, y: l.top, w: l.right - l.left, h: l.bottom - l.top }
+                        }).collect();
+                        ui.set_link_rects(ModelRc::new(VecModel::from(rect_model)));
+                        ui.set_link_rects_page(page);
+                    }
+                }
+            });
+        }
+
+        // Handle click on link
+        {
+            let ui_weak = ui.as_weak();
+            let link_cache = link_cache.clone();
+            ui.on_open_link(move |page, x, y| {
+                let _ui = ui_weak.unwrap();
+                let page_idx = (page - 1) as u16;
+                let lcache = link_cache.borrow();
+                if let Some(page_links) = lcache.get(&page_idx) {
+                    if let Some(link) = links::link_at(page_links, x, y) {
+                        let _ = open::that(&link.url); // open in default browser
+                    }
+                }
+            });
+        }
+
+        {
+            let selected_text = selected_text.clone();
+            ui.on_copy_selection(move || {
+                let text = selected_text.borrow();
+                if !text.is_empty() {
+                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                        let _ = clipboard.set_text(text.as_str());
+                    }
+                }
+            });
+        }
     }
 
     // ── Scroll position tracking + lazy rendering (poll every 150ms) ────────

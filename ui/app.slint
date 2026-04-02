@@ -136,6 +136,13 @@ component NumericInput inherits Rectangle {
     }
 }
 
+export struct TextSelRect {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
 // Data model for a single page image in the viewer
 export struct PageData {
     image: image,
@@ -190,6 +197,22 @@ export component App inherits Window {
     in-out property <bool> show-signature-modal: false;
     in-out property <image> sig-canvas-image;
     in-out property <bool> sig-placing: false;  // waiting for click on page
+    // Text selection (read-only mode)
+    callback text-select-start(int, float, float);
+    callback text-select-move(int, float, float);
+    callback text-select-end(int, float, float);
+    callback copy-selection();
+    callback open-link(int, float, float);
+    in-out property <bool> has-text-selection: false;
+    // Dynamic cursor for read-only mode (updated from Rust via hover callback)
+    callback page-hover(int, float, float);
+    in-out property <bool> cursor-is-pointer: false;
+    // Link overlay rects for pointer cursor
+    in-out property <[TextSelRect]> link-rects: [];
+    in-out property <int> link-rects-page: -1;
+    in-out property <int> text-sel-page: 0;
+    // Up to 20 highlight rects (one per selected text line)
+    in-out property <[TextSelRect]> text-sel-rects: [];
     in-out property <float> sig-cursor-x: 0;
     in-out property <float> sig-cursor-y: 0;
     in-out property <bool> show-text-input: false;
@@ -499,12 +522,21 @@ export component App inherits Window {
                                 vertical-alignment: center;
                             }
 
-                            // Single full-page TouchArea that handles everything.
-                            // Must be FIRST so it captures all events, then visual
-                            // overlays are painted on top (they have no TouchArea).
+                            // Text selection highlight (per-line rects)
+                            if root.has-text-selection && root.text-sel-page == page-data.page-num:
+                            Rectangle {
+                                for sel-rect in root.text-sel-rects: Rectangle {
+                                    x: sel-rect.x * 1px;
+                                    y: sel-rect.y * 1px;
+                                    width: sel-rect.w * 1px;
+                                    height: sel-rect.h * 1px;
+                                    background: #4d9eff44;
+                                }
+                            }
+
                             page-ta := TouchArea {
-                                enabled: root.edit-mode || root.sig-placing;
-                                mouse-cursor: root.sig-placing ? crosshair : (!root.edit-mode ? default :
+                                enabled: true;  // always enabled for text selection
+                                mouse-cursor: root.sig-placing ? crosshair : (!root.edit-mode ? text :
                                     root.active-tool == "select" ?
                                     (root.resizing ? default : (root.has-selection && root.selection-page == page-data.page-num ? move : default)) :
                                     crosshair);
@@ -512,6 +544,8 @@ export component App inherits Window {
                                     if evt.kind == PointerEventKind.down && evt.button == PointerEventButton.left {
                                         if root.sig-placing {
                                             root.sig-click-on-page(page-data.page-num, self.mouse-x / 1px, self.mouse-y / 1px);
+                                        } else if !root.edit-mode {
+                                            root.text-select-start(page-data.page-num, self.mouse-x / 1px, self.mouse-y / 1px);
                                         } else if root.active-tool == "select" {
                                             root.page-click(page-data.page-num, self.mouse-x / 1px, self.mouse-y / 1px);
                                         } else {
@@ -521,6 +555,8 @@ export component App inherits Window {
                                     if evt.kind == PointerEventKind.up && evt.button == PointerEventButton.left {
                                         if root.resizing {
                                             root.resize-end();
+                                        } else if !root.edit-mode {
+                                            root.text-select-end(page-data.page-num, self.mouse-x / 1px, self.mouse-y / 1px);
                                         } else if root.active-tool == "select" {
                                             root.page-drag-end(page-data.page-num, self.mouse-x / 1px, self.mouse-y / 1px);
                                         } else {
@@ -533,8 +569,14 @@ export component App inherits Window {
                                         root.sig-cursor-x = self.mouse-x / 1px;
                                         root.sig-cursor-y = self.mouse-y / 1px;
                                     }
+                                    // Always fire hover in read mode (even when not pressed)
+                                    if !root.edit-mode && !root.sig-placing {
+                                        root.page-hover(page-data.page-num, self.mouse-x / 1px, self.mouse-y / 1px);
+                                    }
                                     if self.pressed {
-                                        if root.resizing {
+                                        if !root.edit-mode && !root.sig-placing {
+                                            root.text-select-move(page-data.page-num, self.mouse-x / 1px, self.mouse-y / 1px);
+                                        } else if root.resizing {
                                             root.resize-move(self.mouse-x / 1px, self.mouse-y / 1px);
                                         } else if root.active-tool == "select" {
                                             root.page-drag-move(page-data.page-num, self.mouse-x / 1px, self.mouse-y / 1px);
@@ -587,6 +629,25 @@ export component App inherits Window {
                                 // SE
                                 Rectangle { x: parent.width - 5px; y: parent.height - 5px; width: 8px; height: 8px; background: white; border-color: #4d9eff; border-width: 1px; }
                             }
+
+                            // Link cursor overlays — MUST be last (on top) for pointer cursor
+                            if !root.edit-mode && root.link-rects-page == page-data.page-num:
+                            Rectangle {
+                                for lr in root.link-rects: Rectangle {
+                                    x: lr.x * 1px;
+                                    y: lr.y * 1px;
+                                    width: lr.w * 1px;
+                                    height: lr.h * 1px;
+                                    TouchArea {
+                                        mouse-cursor: pointer;
+                                        pointer-event(evt) => {
+                                            if evt.kind == PointerEventKind.down && evt.button == PointerEventButton.left {
+                                                root.open-link(page-data.page-num, self.mouse-x / 1px + lr.x, self.mouse-y / 1px + lr.y);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -598,6 +659,18 @@ export component App inherits Window {
                 font-size: 16px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
+            }
+        }
+    }
+
+    // ── Keyboard shortcuts ──
+    FocusScope {
+        key-pressed(evt) => {
+            if evt.modifiers.control && evt.text == "c" {
+                root.copy-selection();
+                accept
+            } else {
+                reject
             }
         }
     }
