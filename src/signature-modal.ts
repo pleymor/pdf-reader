@@ -75,6 +75,8 @@ export class SignatureModal {
 
   /** All strokes collected so far — each stroke is a list of [x,y] pairs. */
   private strokes: [number, number][][] = [];
+  /** Last placed signature strokes, restored on next open. */
+  private lastStrokes: [number, number][][] = [];
 
   private handlers: SignatureReadyHandler[] = [];
 
@@ -96,7 +98,15 @@ export class SignatureModal {
   }
 
   open(): void {
-    this.clearCanvas();
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    if (this.lastStrokes.length > 0) {
+      this.strokes = this.lastStrokes.map(s => s.slice());
+      this.hasContent = true;
+      this.renderSmooth();
+    } else {
+      this.strokes = [];
+      this.hasContent = false;
+    }
     this.backdrop.classList.remove("hidden");
     this.canvas.focus();
   }
@@ -232,6 +242,7 @@ export class SignatureModal {
 
     document.getElementById("sig-place-btn")!.addEventListener("click", () => {
       if (!this.hasContent) return;
+      this.lastStrokes = this.strokes.map(s => s.slice());
       const b64 = this.canvas
         .toDataURL("image/png")
         .split(",")[1]; // strip data:image/png;base64,
