@@ -1,7 +1,7 @@
 use crate::annotation::{interaction::InteractionState, overlay, store::AnnotationStore};
-use crate::viewer::{links, text_selection};
+use crate::viewer::{forms, links, text_selection};
 use crate::pdf::writer;
-use crate::{App, PageData, TextSelRect};
+use crate::{App, FormFieldData, PageData, TextSelRect};
 use pdfium_render::prelude::*;
 use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 use std::path::PathBuf;
@@ -50,6 +50,7 @@ struct ViewerState {
     annotations: AnnotationStore,
     interaction: InteractionState,
     dirty: bool,
+    form_values: std::collections::HashMap<String, String>,
 }
 
 impl Default for ViewerState {
@@ -63,6 +64,7 @@ impl Default for ViewerState {
             annotations: AnnotationStore::default(),
             interaction: InteractionState::default(),
             dirty: false,
+            form_values: std::collections::HashMap::new(),
         }
     }
 }
@@ -307,6 +309,49 @@ pub fn setup(ui: &App) {
                     ui.set_current_page(1);
                     ui.set_page_text("1".into());
                     ui.set_has_document(true);
+
+                    // Extract form fields for all pages
+                    // Also read values from lopdf (pdfium may not see values written by lopdf)
+                    let lopdf_values = read_lopdf_form_values(&path);
+
+                    let mut all_form_fields: Vec<FormFieldData> = Vec::new();
+                    for i in 0..page_count {
+                        let page_height_pt = s.page_dims.get(i as usize)
+                            .map(|d| if s.rotation == 90 || s.rotation == 270 { d.width_pt } else { d.height_pt })
+                            .unwrap_or(841.0);
+                        let ff = forms::extract_form_fields(&pdfium, &path, i, s.scale, page_height_pt);
+                        for f in ff {
+                            // Prefer lopdf value over pdfium value (handles post-save reload)
+                            let value = lopdf_values.get(&f.name)
+                                .cloned()
+                                .unwrap_or(f.value.clone());
+                            let checked = if f.field_type == forms::FormFieldType::CheckBox {
+                                value == "true" || value == "Yes" || value == "On"
+                            } else {
+                                f.checked
+                            };
+                            all_form_fields.push(FormFieldData {
+                                name: f.name.clone().into(),
+                                field_type: match f.field_type {
+                                    forms::FormFieldType::Text => "text".into(),
+                                    forms::FormFieldType::CheckBox => "checkbox".into(),
+                                    forms::FormFieldType::Radio => "radio".into(),
+                                    forms::FormFieldType::Dropdown => "dropdown".into(),
+                                },
+                                page_num: (f.page + 1) as i32,
+                                x: f.left,
+                                y: f.top,
+                                w: f.width,
+                                h: f.height,
+                                value: value.into(),
+                                checked,
+                            });
+                        }
+                    }
+                    if !all_form_fields.is_empty() {
+                        ui.set_form_fields(ModelRc::new(VecModel::from(all_form_fields)));
+                    }
+
                     let status = if ann_count > 0 {
                         format!(
                             "{} — {} pages, {} annotations",
@@ -916,9 +961,9 @@ pub fn setup(ui: &App) {
             let s = state.lock().unwrap();
             let Some(path) = &s.file_path else { return };
             let all_annotations = s.annotations.all();
-            if all_annotations.is_empty() { return; }
+            let form_values = s.form_values.clone();
 
-            match save_annotated_pdf(path, &all_annotations) {
+            match save_annotated_pdf(path, &all_annotations, &form_values) {
                 Ok(()) => {
                     ui.set_status_text(SharedString::from("Saved"));
                 }
@@ -1170,8 +1215,10 @@ pub fn setup(ui: &App) {
         ui.on_save_file_as(move || {
             let ui = ui_weak.unwrap();
             let s = state.lock().unwrap();
-            let Some(src_path) = &s.file_path else { return };
+            let Some(src_path) = s.file_path.clone() else { return };
             let all_annotations = s.annotations.all();
+            let form_values = s.form_values.clone();
+            drop(s);
 
             let Some(dest) = rfd::FileDialog::new()
                 .add_filter("PDF", &["pdf"])
@@ -1190,7 +1237,7 @@ pub fn setup(ui: &App) {
                 }
             }
 
-            match save_annotated_pdf(&dest, &all_annotations) {
+            match save_annotated_pdf(&dest, &all_annotations, &form_values) {
                 Ok(()) => {
                     ui.set_status_text(SharedString::from(format!(
                         "Saved as {}",
@@ -1199,6 +1246,39 @@ pub fn setup(ui: &App) {
                 }
                 Err(e) => {
                     ui.set_status_text(SharedString::from(format!("Save error: {}", e)));
+                }
+            }
+        });
+    }
+
+    // ── Form field changes ─────────────────────────────────────────────────
+    {
+        let state = state.clone();
+        ui.on_form_field_changed(move |name, value| {
+            let mut s = state.lock().unwrap();
+            s.form_values.insert(name.to_string(), value.to_string());
+            s.dirty = true;
+            // Don't update the Slint model — it would recreate the LineEdit and lose cursor/focus
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_form_checkbox_changed(move |name, checked| {
+            let ui = ui_weak.unwrap();
+            let mut s = state.lock().unwrap();
+            s.form_values.insert(name.to_string(), if checked { "true".into() } else { "false".into() });
+            s.dirty = true;
+
+            let model = ui.get_form_fields();
+            for i in 0..model.row_count() {
+                if let Some(mut ff) = model.row_data(i) {
+                    if ff.name == name {
+                        ff.checked = checked;
+                        ff.value = if checked { "true".into() } else { "false".into() };
+                        model.set_row_data(i, ff);
+                        break;
+                    }
                 }
             }
         });
@@ -1750,9 +1830,69 @@ fn update_sig_image(ui: &App, pixmap: &tiny_skia::Pixmap) {
     ui.set_sig_canvas_image(Image::from_rgba8(buf));
 }
 
+/// Read form field values from PDF using lopdf (same lib used for writing).
+fn read_lopdf_form_values(path: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let mut values = std::collections::HashMap::new();
+    let Ok(doc) = lopdf::Document::load(path) else { return values };
+
+    // Get AcroForm fields
+    let Ok(root_ref) = doc.trailer.get(b"Root") else { return values };
+    let Ok(cat_id) = root_ref.as_reference() else { return values };
+    let Ok(cat) = doc.get_object(cat_id) else { return values };
+    let Ok(dict) = cat.as_dict() else { return values };
+    let Ok(lopdf::Object::Reference(acroform_id)) = dict.get(b"AcroForm") else { return values };
+    let Ok(acroform) = doc.get_object(*acroform_id) else { return values };
+    let Ok(af_dict) = acroform.as_dict() else { return values };
+    let Ok(lopdf::Object::Array(fields_arr)) = af_dict.get(b"Fields") else { return values };
+
+    fn collect_fields(doc: &lopdf::Document, refs: &[lopdf::Object], parent_name: &str, values: &mut std::collections::HashMap<String, String>) {
+        for obj_ref in refs {
+            let lopdf::Object::Reference(id) = obj_ref else { continue };
+            let Ok(obj) = doc.get_object(*id) else { continue };
+            let Ok(dict) = obj.as_dict() else { continue };
+
+            let partial: String = dict.get(b"T").ok()
+                .and_then(|o| match o {
+                    lopdf::Object::String(s, _) => String::from_utf8(s.clone()).ok(),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            let full_name = if parent_name.is_empty() {
+                partial.clone()
+            } else if partial.is_empty() {
+                parent_name.to_string()
+            } else {
+                format!("{}.{}", parent_name, partial)
+            };
+
+            // Read value
+            if let Ok(v) = dict.get(b"V") {
+                let val = match v {
+                    lopdf::Object::String(s, _) => String::from_utf8(s.clone()).unwrap_or_default(),
+                    lopdf::Object::Name(n) => String::from_utf8(n.clone()).unwrap_or_default(),
+                    _ => String::new(),
+                };
+                if !val.is_empty() && !full_name.is_empty() {
+                    values.insert(full_name.clone(), val);
+                }
+            }
+
+            // Recurse into Kids
+            if let Ok(lopdf::Object::Array(kids)) = dict.get(b"Kids") {
+                collect_fields(doc, kids, &full_name, values);
+            }
+        }
+    }
+
+    collect_fields(&doc, fields_arr, "", &mut values);
+    values
+}
+
 fn save_annotated_pdf(
     path: &std::path::Path,
     annotations: &[crate::pdf::models::Annotation],
+    form_values: &std::collections::HashMap<String, String>,
 ) -> Result<(), String> {
     use std::collections::HashMap;
 
@@ -1798,6 +1938,18 @@ fn save_annotated_pdf(
     writer::save_meta(&mut doc, &meta)?;
 
     // Write to file
+    // Write form field values
+    if !form_values.is_empty() {
+        let fields: Vec<writer::FormFieldValue> = form_values
+            .iter()
+            .map(|(name, value)| writer::FormFieldValue {
+                name: name.clone(),
+                value: value.clone(),
+            })
+            .collect();
+        writer::write_form_fields(&mut doc, &fields)?;
+    }
+
     doc.save(path).map_err(|e| format!("{}", e))?;
     Ok(())
 }
