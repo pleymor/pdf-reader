@@ -221,6 +221,8 @@ function setDirty(val: boolean): void {
   else      { unregisterCloseGuard(); }
 }
 
+let closeGuardBusy = false;
+
 async function registerCloseGuard(): Promise<void> {
   // guardRegistering is a synchronous flag that prevents a second async call
   // from registering a second listener before the first await resolves.
@@ -228,16 +230,23 @@ async function registerCloseGuard(): Promise<void> {
   guardRegistering = true;
   try {
     unlistenClose = await appWindow.onCloseRequested(async (event) => {
-      // Re-check isDirty: may have been cleared (e.g. save) before this listener
-      // finished registering, or by a concurrent "yes" click.
-      if (!isDirty) { return; /* no preventDefault → window closes normally */ }
-      event.preventDefault();
-      const ok = await ask("Close without saving?", { title: "Unsaved changes", kind: "warning" });
-      if (ok) {
-        // Set isDirty=false BEFORE close() so that if close() re-triggers this
-        // handler, the !isDirty guard above returns early instead of looping.
+      if (!isDirty) { return; }
+      // If the dialog is already open (e.g. user clicked close twice), force-close.
+      if (closeGuardBusy) {
         setDirty(false);
-        await appWindow.close();
+        await appWindow.destroy();
+        return;
+      }
+      event.preventDefault();
+      closeGuardBusy = true;
+      try {
+        const ok = await ask("Close without saving?", { title: "Unsaved changes", kind: "warning" });
+        if (ok) {
+          setDirty(false);
+          await appWindow.destroy();
+        }
+      } finally {
+        closeGuardBusy = false;
       }
     });
   } finally {
