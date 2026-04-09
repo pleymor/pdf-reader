@@ -43,6 +43,17 @@ function snapZoom(current: number, dir: 1 | -1): number {
   }
 }
 
+async function applyFitMode(): Promise<void> {
+  if (!viewer.isLoaded() || fitMode === "none") return;
+  const scroll = document.getElementById("viewer-scroll")!;
+  if (fitMode === "fit-width") {
+    await viewer.setScale((scroll.clientWidth - 40) / viewer.pageWidthPt);
+  } else {
+    await viewer.setScale(scroll.clientHeight / viewer.pageHeightPt);
+  }
+  toolbar.updateZoom(viewer.scale);
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const appWindow = getCurrentWindow();
@@ -55,6 +66,7 @@ let outputPath: string | null = null;
 let displayFilePath: string | null = null;
 let isDirty = false;
 let guardRegistering = false;
+let fitMode: "none" | "fit-width" | "fit-height" = "none";
 let pendingSignature: string | null = null;
 let editingTextAnn:  TextAnnotation | null = null;
 let editingShapeAnn: RectAnnotation | CircleAnnotation | null = null;
@@ -62,6 +74,10 @@ let editingShapeAnn: RectAnnotation | CircleAnnotation | null = null;
 // ── Instances ─────────────────────────────────────────────────────────────────
 
 const viewer = new PdfViewer();
+viewer.onResizeCb = async () => {
+  if (fitMode !== "none") await applyFitMode();
+  else viewer.reflow();
+};
 const store  = new AnnotationStore();
 const toolState = defaultToolState();
 const toolbar   = new Toolbar();
@@ -384,6 +400,7 @@ toolbar.on(async (e) => {
     case "zoom-in":
     case "zoom-out":
       if (viewer.isLoaded()) {
+        fitMode = "none"; toolbar.updateFitMode(fitMode);
         await viewer.setScale(snapZoom(viewer.scale, e.type === "zoom-in" ? 1 : -1));
         toolbar.updateZoom(viewer.scale);
       }
@@ -391,6 +408,7 @@ toolbar.on(async (e) => {
 
     case "zoom-set":
       if (viewer.isLoaded()) {
+        fitMode = "none"; toolbar.updateFitMode(fitMode);
         await viewer.setScale(e.scale);
         toolbar.updateZoom(viewer.scale);
       }
@@ -398,20 +416,19 @@ toolbar.on(async (e) => {
 
     case "fit-width":
       if (viewer.isLoaded()) {
-        const scroll = document.getElementById("viewer-scroll")!;
-        await viewer.setScale((scroll.clientWidth - 40) / viewer.pageWidthPt);
-        toolbar.updateZoom(viewer.scale);
+        fitMode = fitMode === "fit-width" ? "none" : "fit-width";
+        toolbar.updateFitMode(fitMode);
+        if (fitMode === "fit-width") await applyFitMode();
       }
       break;
 
-    case "fit-height": {
+    case "fit-height":
       if (viewer.isLoaded()) {
-        const scroll = document.getElementById("viewer-scroll")!;
-        await viewer.setScale(scroll.clientHeight / viewer.pageHeightPt);
-        toolbar.updateZoom(viewer.scale);
+        fitMode = fitMode === "fit-height" ? "none" : "fit-height";
+        toolbar.updateFitMode(fitMode);
+        if (fitMode === "fit-height") await applyFitMode();
       }
       break;
-    }
 
     case "page-prev":
       if (viewer.isLoaded()) viewer.goToPage(viewer.currentPage - viewer.columnCount);
@@ -527,17 +544,17 @@ document.addEventListener("keydown", async (e) => {
   }
   if (ctrl && (e.key === "+" || e.key === "=")) {
     e.preventDefault();
-    if (viewer.isLoaded()) { await viewer.setScale(snapZoom(viewer.scale, 1));  toolbar.updateZoom(viewer.scale); }
+    if (viewer.isLoaded()) { fitMode = "none"; toolbar.updateFitMode(fitMode); await viewer.setScale(snapZoom(viewer.scale, 1));  toolbar.updateZoom(viewer.scale); }
     return;
   }
   if (ctrl && e.key === "-") {
     e.preventDefault();
-    if (viewer.isLoaded()) { await viewer.setScale(snapZoom(viewer.scale, -1)); toolbar.updateZoom(viewer.scale); }
+    if (viewer.isLoaded()) { fitMode = "none"; toolbar.updateFitMode(fitMode); await viewer.setScale(snapZoom(viewer.scale, -1)); toolbar.updateZoom(viewer.scale); }
     return;
   }
   if (ctrl && e.key === "0") {
     e.preventDefault();
-    if (viewer.isLoaded()) { await viewer.setScale(CSS_UNITS); toolbar.updateZoom(viewer.scale); }
+    if (viewer.isLoaded()) { fitMode = "none"; toolbar.updateFitMode(fitMode); await viewer.setScale(CSS_UNITS); toolbar.updateZoom(viewer.scale); }
     return;
   }
   if (!ctrl && (e.key === "ArrowRight" || e.key === "PageDown")) {
@@ -637,6 +654,7 @@ window.addEventListener("keydown", async (e: KeyboardEvent) => {
 document.getElementById("viewer-scroll")!.addEventListener("wheel", async (e: WheelEvent) => {
   if (!e.ctrlKey || !viewer.isLoaded()) return;
   e.preventDefault();
+  fitMode = "none"; toolbar.updateFitMode(fitMode);
   await viewer.setScale(snapZoom(viewer.scale, e.deltaY < 0 ? 1 : -1));
   toolbar.updateZoom(viewer.scale);
 }, { passive: false });

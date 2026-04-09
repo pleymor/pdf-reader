@@ -518,6 +518,7 @@ export class PdfViewer {
   columnCount = 1;
 
   private onLayoutChangedCb?: (views: PdfPageView[]) => void;
+  onResizeCb?: () => void;
   private observer: IntersectionObserver | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -809,7 +810,12 @@ export class PdfViewer {
     this.resizeObserver?.disconnect();
     this.resizeObserver = new ResizeObserver(() => {
       if (this.resizeTimer) clearTimeout(this.resizeTimer);
-      this.resizeTimer = setTimeout(() => this.reflow(), 100);
+      this.resizeTimer = setTimeout(() => {
+        // onResizeCb may call setScale (which includes reflow), so only
+        // fall back to a plain reflow when no callback handled it.
+        if (this.onResizeCb) this.onResizeCb();
+        else this.reflow();
+      }, 100);
     });
     this.resizeObserver.observe(this.scrollEl);
   }

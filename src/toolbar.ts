@@ -64,6 +64,8 @@ export class Toolbar {
   private pageTotal!: HTMLSpanElement;
   private pageNavSection!: HTMLElement;
   private zoomInput!: HTMLInputElement;
+  private fitWidthBtn!: HTMLButtonElement;
+  private fitHeightBtn!: HTMLButtonElement;
   private _lastScale = CSS_UNITS;
   private toolBtns: Partial<Record<ToolKind, HTMLButtonElement>> = {};
 
@@ -112,6 +114,11 @@ export class Toolbar {
     if (this.zoomInput && document.activeElement !== this.zoomInput) {
       this.zoomInput.value = `${Math.round(scale / CSS_UNITS * 100)}%`;
     }
+  }
+
+  updateFitMode(mode: "none" | "fit-width" | "fit-height"): void {
+    this.fitWidthBtn.classList.toggle("active", mode === "fit-width");
+    this.fitHeightBtn.classList.toggle("active", mode === "fit-height");
   }
 
   updatePageInfo(current: number, total: number): void {
@@ -257,19 +264,19 @@ export class Toolbar {
     this.reg(zoomIn, undefined, "ttZoomIn");
     zoomIn.addEventListener("click", () => this.emit({ type: "zoom-in" }));
 
-    const fitWidthBtn = this.btn(ICON_FIT_WIDTH, "Fit to width", "icon-btn");
-    this.reg(fitWidthBtn, undefined, "ttFitWidth");
-    fitWidthBtn.addEventListener("click", () => this.emit({ type: "fit-width" }));
-    const fitHeightBtn = this.btn(ICON_FIT_HEIGHT, "Fit to height", "icon-btn");
-    this.reg(fitHeightBtn, undefined, "ttFitHeight");
-    fitHeightBtn.addEventListener("click", () => this.emit({ type: "fit-height" }));
+    this.fitWidthBtn = this.btn(ICON_FIT_WIDTH, "Fit to width", "icon-btn");
+    this.reg(this.fitWidthBtn, undefined, "ttFitWidth");
+    this.fitWidthBtn.addEventListener("click", () => this.emit({ type: "fit-width" }));
+    this.fitHeightBtn = this.btn(ICON_FIT_HEIGHT, "Fit to height", "icon-btn");
+    this.reg(this.fitHeightBtn, undefined, "ttFitHeight");
+    this.fitHeightBtn.addEventListener("click", () => this.emit({ type: "fit-height" }));
 
     // Rotate
     const rotateBtn = this.btn(ICON_ROTATE_CW, "Rotate 90\u00b0 clockwise", "icon-btn");
     this.reg(rotateBtn, undefined, "ttRotate");
     rotateBtn.addEventListener("click", () => this.emit({ type: "rotate" }));
 
-    d.append(zoomOut, this.zoomInput, zoomIn, fitWidthBtn, fitHeightBtn, rotateBtn, this.sep());
+    d.append(zoomOut, this.zoomInput, zoomIn, this.fitWidthBtn, this.fitHeightBtn, rotateBtn, this.sep());
 
     // Annotation mode toggle
     this.modeBtn = this.btn("Annotate", "Annotation mode");
