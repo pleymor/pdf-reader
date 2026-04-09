@@ -514,11 +514,18 @@ export class CanvasOverlay {
       ctx.restore();
 
     } else if (ann.kind === "signature") {
-      const [x1, y1] = this.toCanvas(ann.x,             ann.y + ann.height); // canvas top-left
-      const [x2, y2] = this.toCanvas(ann.x + ann.width, ann.y);              // canvas bottom-right
+      const [x, y] = this.toCanvas(ann.x, ann.y + ann.height); // PDF top-left → canvas anchor
+      const rotRad = (this.viewportRotation * Math.PI) / 180;
+      const w = ann.width * scale;
+      const h = ann.height * scale;
       const img = new Image();
-      img.onload = () => this.ctx.drawImage(img,
-        Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+      img.onload = () => {
+        this.ctx.save();
+        this.ctx.translate(x, y);
+        if (rotRad !== 0) this.ctx.rotate(rotRad);
+        this.ctx.drawImage(img, 0, 0, w, h);
+        this.ctx.restore();
+      };
       img.src = `data:image/png;base64,${ann.imageData}`;
     }
   }
