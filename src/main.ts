@@ -570,9 +570,31 @@ document.addEventListener("keydown", async (e) => {
 
 // ── Signature events ──────────────────────────────────────────────────────────
 
+// Floating signature preview that follows the cursor during placement
+const sigPreview = document.createElement("img");
+sigPreview.className = "sig-preview";
+document.body.appendChild(sigPreview);
+
+function showSigPreview(b64: string): void {
+  sigPreview.src = `data:image/png;base64,${b64}`;
+  sigPreview.style.display = "block";
+}
+
+function hideSigPreview(): void {
+  sigPreview.style.display = "none";
+  sigPreview.src = "";
+}
+
+document.addEventListener("mousemove", (e: MouseEvent) => {
+  if (!pendingSignature) return;
+  sigPreview.style.left = `${e.clientX}px`;
+  sigPreview.style.top  = `${e.clientY}px`;
+});
+
 sigModal.onSignatureReady((imageData: string) => {
   pendingSignature = imageData;
-  document.getElementById("viewer-scroll")!.style.cursor = "crosshair";
+  showSigPreview(imageData);
+  document.getElementById("viewer-scroll")!.style.cursor = "none";
   showToast("Click on the page to place your signature. Press Esc to cancel.");
 });
 
@@ -596,6 +618,7 @@ document.getElementById("viewer-scroll")!.addEventListener("click", (e: MouseEve
   setDirty(true);
 
   pendingSignature = null;
+  hideSigPreview();
   document.getElementById("viewer-scroll")!.style.cursor = "";
   toolbar.clearActiveTool();
 });
@@ -638,6 +661,7 @@ window.addEventListener("keydown", async (e: KeyboardEvent) => {
   if (e.key !== "Escape") return;
   if (pendingSignature) {
     pendingSignature = null;
+    hideSigPreview();
     document.getElementById("viewer-scroll")!.style.cursor = "";
     showToast("Signature placement cancelled.");
   } else if (toolState.tool !== "select") {

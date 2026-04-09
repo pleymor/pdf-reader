@@ -956,12 +956,12 @@ export class CanvasOverlay {
     this.emitTextSelected(ann);
   }
 
-  /** Place a signature image on the current page at canvas coordinates. */
+  /** Place a signature image centred on the given canvas coordinates. */
   placeSignature(canvasX: number, canvasY: number, imageData: string, widthPt: number, heightPt: number): SignatureAnnotation {
     const [pdfX, pdfY] = this.toPdf(canvasX, canvasY);
     const ann: SignatureAnnotation = {
       kind: "signature", page: this.currentPage,
-      x: pdfX, y: pdfY - heightPt,
+      x: pdfX - widthPt / 2, y: pdfY - heightPt / 2,
       width: widthPt, height: heightPt, imageData,
     };
     this.committed.push(ann);
