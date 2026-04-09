@@ -112,22 +112,24 @@ export class PdfPageView {
 
       // Render PDF content into an off-screen buffer first so the visible
       // canvas is never blank — old content stays until the new frame is ready.
+      const dpr = window.devicePixelRatio || 1;
       const buf = document.createElement("canvas");
-      buf.width  = viewport.width;
-      buf.height = viewport.height;
+      buf.width  = Math.floor(viewport.width  * dpr);
+      buf.height = Math.floor(viewport.height * dpr);
       const bufCtx = buf.getContext("2d")!;
-      await page.render({ canvasContext: bufCtx, viewport }).promise;
+      const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined;
+      await page.render({ canvasContext: bufCtx, viewport, transform }).promise;
 
       // Atomic swap: resize + blit in one synchronous block.
-      this.canvas.width  = viewport.width;
-      this.canvas.height = viewport.height;
+      this.canvas.width  = buf.width;
+      this.canvas.height = buf.height;
       this.canvas.style.width  = `${viewport.width}px`;
       this.canvas.style.height = `${viewport.height}px`;
       this.canvas.getContext("2d")!.drawImage(buf, 0, 0);
 
       // Size annotation canvas (no content to preserve here).
-      this.annotationCanvas.width  = viewport.width;
-      this.annotationCanvas.height = viewport.height;
+      this.annotationCanvas.width  = Math.floor(viewport.width  * dpr);
+      this.annotationCanvas.height = Math.floor(viewport.height * dpr);
       this.annotationCanvas.style.width  = `${viewport.width}px`;
       this.annotationCanvas.style.height = `${viewport.height}px`;
 

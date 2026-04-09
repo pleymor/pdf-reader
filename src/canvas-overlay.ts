@@ -394,7 +394,9 @@ export class CanvasOverlay {
   // ── Redraw ───────────────────────────────────────────────────────────────────
 
   redrawCommitted(): void {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    const dpr = window.devicePixelRatio || 1;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.ctx.clearRect(0, 0, this.canvas.width / dpr, this.canvas.height / dpr);
     for (const ann of this.committed) {
       this.drawAnnotation(ann);
     }
