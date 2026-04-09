@@ -545,6 +545,8 @@ export class PdfViewer {
     return dim ? dim.height : 841;
   }
 
+  get document(): PDFDocumentProxy | null { return this.pdfDoc; }
+
   get currentViewport(): PageViewport | null {
     return this.pageViews[this._currentPage - 1]?.viewport ?? null;
   }

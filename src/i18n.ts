@@ -63,6 +63,14 @@ export interface Translations {
   compressApply: string;
   compressFlattenDesc: string;
   compressFlatten: string;
+  // Page manager
+  ttPages: string;
+  pmTitle: string;
+  pmCancel: string;
+  pmApply: string;
+  pmDeletePage: string;
+  pmRotatePage: string;
+  pmRestorePage: string;
   // Context menu
   ctxCopy: string;
 }
@@ -124,6 +132,13 @@ const EN: Translations = {
   compressApply:     "Compress \u0026 Save As\u2026",
   compressFlattenDesc: "Remove interactive fields",
   compressFlatten:     "Flatten forms",
+  ttPages:             "Manage pages",
+  pmTitle:             "Manage Pages",
+  pmCancel:            "Cancel",
+  pmApply:             "Apply",
+  pmDeletePage:        "Delete page",
+  pmRotatePage:        "Rotate page",
+  pmRestorePage:       "Restore page",
   ctxCopy:             "Copy",
   settingsDefaultApp:  "Default App",
   settingsSetDefault:  "Set as default PDF viewer",
@@ -187,6 +202,13 @@ const FR: Translations = {
   compressApply:     "Compresser et enreg. sous\u2026",
   compressFlattenDesc: "Supprime les champs interactifs",
   compressFlatten:     "Aplatir les formulaires",
+  ttPages:             "Gérer les pages",
+  pmTitle:             "Gérer les pages",
+  pmCancel:            "Annuler",
+  pmApply:             "Appliquer",
+  pmDeletePage:        "Supprimer la page",
+  pmRotatePage:        "Tourner la page",
+  pmRestorePage:       "Restaurer la page",
   ctxCopy:             "Copier",
   settingsDefaultApp:  "Application par d\u00e9faut",
   settingsSetDefault:  "D\u00e9finir comme visionneuse PDF par d\u00e9faut",
@@ -250,6 +272,13 @@ const ZH: Translations = {
   compressApply:     "\u538b\u7f29\u5e76\u53e6\u5b58\u4e3a\u2026",
   compressFlattenDesc: "移除交互式字段",
   compressFlatten:     "展平表单",
+  ttPages:             "管理页面",
+  pmTitle:             "管理页面",
+  pmCancel:            "取消",
+  pmApply:             "应用",
+  pmDeletePage:        "删除页面",
+  pmRotatePage:        "旋转页面",
+  pmRestorePage:       "恢复页面",
   ctxCopy:           "\u590d\u5236",
 };
 
@@ -310,6 +339,13 @@ const HI: Translations = {
   compressApply:     "\u0938\u0902\u092a\u0940\u0921\u093c\u093f\u0924 \u0915\u0930\u0947\u0902 \u0914\u0930 \u0938\u0939\u0947\u091c\u0947\u0902\u2026",
   compressFlattenDesc: "इंटरैक्टिव फ़ील्ड हटाएं",
   compressFlatten:     "फ़ॉर्म फ्लैट करें",
+  ttPages:             "पृष्ठ प्रबंधित करें",
+  pmTitle:             "पृष्ठ प्रबंधित करें",
+  pmCancel:            "रद्द करें",
+  pmApply:             "लागू करें",
+  pmDeletePage:        "पृष्ठ हटाएं",
+  pmRotatePage:        "पृष्ठ घुमाएं",
+  pmRestorePage:       "पृष्ठ पुनर्स्थापित करें",
   ctxCopy:           "\u0915\u0949\u092a\u0940",
 };
 
@@ -370,6 +406,13 @@ const ES: Translations = {
   compressApply:     "Comprimir y guardar como\u2026",
   compressFlattenDesc: "Eliminar campos interactivos",
   compressFlatten:     "Aplanar formularios",
+  ttPages:             "Gestionar páginas",
+  pmTitle:             "Gestionar páginas",
+  pmCancel:            "Cancelar",
+  pmApply:             "Aplicar",
+  pmDeletePage:        "Eliminar página",
+  pmRotatePage:        "Rotar página",
+  pmRestorePage:       "Restaurar página",
   ctxCopy:           "Copiar",
 };
 
@@ -430,6 +473,13 @@ const AR: Translations = {
   compressApply:     "\u0636\u063a\u0637 \u0648\u062d\u0641\u0638 \u0628\u0627\u0633\u0645\u2026",
   compressFlattenDesc: "إزالة الحقول التفاعلية",
   compressFlatten:     "تسوية النماذج",
+  ttPages:             "إدارة الصفحات",
+  pmTitle:             "إدارة الصفحات",
+  pmCancel:            "إلغاء",
+  pmApply:             "تطبيق",
+  pmDeletePage:        "حذف الصفحة",
+  pmRotatePage:        "تدوير الصفحة",
+  pmRestorePage:       "استعادة الصفحة",
   ctxCopy:           "\u0646\u0633\u062e",
 };
 
@@ -490,6 +540,13 @@ const BN: Translations = {
   compressApply:     "সংকুচিত করুন ও সংরক্ষণ করুন…",
   compressFlattenDesc: "ইন্টারেকটিভ ফিল্ড সরান",
   compressFlatten:     "ফর্ম সমতল করুন",
+  ttPages:             "পৃষ্ঠা পরিচালনা",
+  pmTitle:             "পৃষ্ঠা পরিচালনা",
+  pmCancel:            "বাতিল",
+  pmApply:             "প্রয়োগ",
+  pmDeletePage:        "পৃষ্ঠা মুছুন",
+  pmRotatePage:        "পৃষ্ঠা ঘোরান",
+  pmRestorePage:       "পৃষ্ঠা পুনরুদ্ধার",
   ctxCopy:           "\u0995\u09aa\u09bf",
 };
 
@@ -550,6 +607,13 @@ const RU: Translations = {
   compressApply:     "Сжать и сохранить как…",
   compressFlattenDesc: "Убирает интерактивные поля",
   compressFlatten:     "Удалить поля форм",
+  ttPages:             "Управление страницами",
+  pmTitle:             "Управление страницами",
+  pmCancel:            "Отмена",
+  pmApply:             "Применить",
+  pmDeletePage:        "Удалить страницу",
+  pmRotatePage:        "Повернуть страницу",
+  pmRestorePage:       "Восстановить страницу",
   ctxCopy:           "\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c",
 };
 
@@ -610,6 +674,13 @@ const PT: Translations = {
   compressApply:     "Comprimir e guardar como…",
   compressFlattenDesc: "Remover campos interativos",
   compressFlatten:     "Achatar formulários",
+  ttPages:             "Gerir páginas",
+  pmTitle:             "Gerir páginas",
+  pmCancel:            "Cancelar",
+  pmApply:             "Aplicar",
+  pmDeletePage:        "Eliminar página",
+  pmRotatePage:        "Rodar página",
+  pmRestorePage:       "Restaurar página",
   ctxCopy:           "Copiar",
 };
 
@@ -670,6 +741,13 @@ const UR: Translations = {
   compressApply:     "سکیڑیں اور محفوظ کریں…",
   compressFlattenDesc: "انٹریکٹو فیلڈ ہٹائیں",
   compressFlatten:     "فارم ہموار کریں",
+  ttPages:             "صفحات کا انتظام",
+  pmTitle:             "صفحات کا انتظام",
+  pmCancel:            "منسوخ",
+  pmApply:             "لاگو",
+  pmDeletePage:        "صفحہ حذف کریں",
+  pmRotatePage:        "صفحہ گھمائیں",
+  pmRestorePage:       "صفحہ بحال کریں",
   ctxCopy:           "\u06a9\u0627\u067e\u06cc",
 };
 
@@ -730,6 +808,13 @@ const ID: Translations = {
   compressApply:     "Kompres dan Simpan Sebagai…",
   compressFlattenDesc: "Hapus kolom interaktif",
   compressFlatten:     "Ratakan formulir",
+  ttPages:             "Kelola halaman",
+  pmTitle:             "Kelola Halaman",
+  pmCancel:            "Batal",
+  pmApply:             "Terapkan",
+  pmDeletePage:        "Hapus halaman",
+  pmRotatePage:        "Putar halaman",
+  pmRestorePage:       "Pulihkan halaman",
   ctxCopy:           "Salin",
 };
 
@@ -790,6 +875,13 @@ const DE: Translations = {
   compressApply:     "Komprimieren und speichern unter…",
   compressFlattenDesc: "Interaktive Felder entfernen",
   compressFlatten:     "Formulare einbetten",
+  ttPages:             "Seiten verwalten",
+  pmTitle:             "Seiten verwalten",
+  pmCancel:            "Abbrechen",
+  pmApply:             "Anwenden",
+  pmDeletePage:        "Seite löschen",
+  pmRotatePage:        "Seite drehen",
+  pmRestorePage:       "Seite wiederherstellen",
   ctxCopy:           "Kopieren",
 };
 
@@ -850,6 +942,13 @@ const JA: Translations = {
   compressApply:     "圧縮して名前を付けて保存…",
   compressFlattenDesc: "インタラクティブフィールドを削除",
   compressFlatten:     "フォームを平坦化",
+  ttPages:             "ページ管理",
+  pmTitle:             "ページ管理",
+  pmCancel:            "キャンセル",
+  pmApply:             "適用",
+  pmDeletePage:        "ページを削除",
+  pmRotatePage:        "ページを回転",
+  pmRestorePage:       "ページを復元",
   ctxCopy:           "\u30b3\u30d4\u30fc",
 };
 
@@ -910,6 +1009,13 @@ const SW: Translations = {
   compressApply:     "Bana na Hifadhi Kama…",
   compressFlattenDesc: "Ondoa sehemu zinazoingiliana",
   compressFlatten:     "Sawazisha fomu",
+  ttPages:             "Dhibiti kurasa",
+  pmTitle:             "Dhibiti Kurasa",
+  pmCancel:            "Ghairi",
+  pmApply:             "Tekeleza",
+  pmDeletePage:        "Futa ukurasa",
+  pmRotatePage:        "Zungusha ukurasa",
+  pmRestorePage:       "Rejesha ukurasa",
   ctxCopy:           "Nakili",
 };
 
@@ -970,6 +1076,13 @@ const MR: Translations = {
   compressApply:     "संकुचित करा आणि जतन करा…",
   compressFlattenDesc: "परस्परसंवादी फील्ड काढा",
   compressFlatten:     "फॉर्म सपाट करा",
+  ttPages:             "पृष्ठे व्यवस्थापित करा",
+  pmTitle:             "पृष्ठे व्यवस्थापित करा",
+  pmCancel:            "रद्द करा",
+  pmApply:             "लागू करा",
+  pmDeletePage:        "पृष्ठ हटवा",
+  pmRotatePage:        "पृष्ठ फिरवा",
+  pmRestorePage:       "पृष्ठ पुनर्स्थापित करा",
   ctxCopy:           "\u0915\u0949\u092a\u0940",
 };
 
@@ -1030,6 +1143,13 @@ const TE: Translations = {
   compressApply:     "కుదించు మరియు సేవ్ చేయండి…",
   compressFlattenDesc: "ఇంటరాక్టివ్ ఫీల్డ్‌లు తొలగించండి",
   compressFlatten:     "ఫారమ్‌లు చదును చేయండి",
+  ttPages:             "పేజీలను నిర్వహించండి",
+  pmTitle:             "పేజీలను నిర్వహించండి",
+  pmCancel:            "రద్దు",
+  pmApply:             "అమలు",
+  pmDeletePage:        "పేజీ తొలగించండి",
+  pmRotatePage:        "పేజీ తిర్గండి",
+  pmRestorePage:       "పేజీ పునరుద్ధరించండి",
   ctxCopy:           "\u0c15\u0c3e\u0c2a\u0c40",
 };
 
@@ -1090,6 +1210,13 @@ const TR: Translations = {
   compressApply:     "Sıkıştır ve Farklı Kaydet…",
   compressFlattenDesc: "Etkileşimli alanları kaldır",
   compressFlatten:     "Formları düzleştir",
+  ttPages:             "Sayfaları yönet",
+  pmTitle:             "Sayfaları Yönet",
+  pmCancel:            "İptal",
+  pmApply:             "Uygula",
+  pmDeletePage:        "Sayfayı sil",
+  pmRotatePage:        "Sayfayı döndür",
+  pmRestorePage:       "Sayfayı geri yükle",
   ctxCopy:           "Kopyala",
 };
 
@@ -1150,6 +1277,13 @@ const TA: Translations = {
   compressApply:     "சுருக்கி சேமி…",
   compressFlattenDesc: "ூடாடும் புலங்களை நீக்கு",
   compressFlatten:     "படிவங்களை தட்டையாକ்கு",
+  ttPages:             "பக்கங்களை நிர்வகி",
+  pmTitle:             "பக்கங்களை நிர்வகி",
+  pmCancel:            "ரத்து",
+  pmApply:             "செயல்படுத்து",
+  pmDeletePage:        "பக்கத்தை நீக்கு",
+  pmRotatePage:        "பக்கத்தை சுழற்று",
+  pmRestorePage:       "பக்கத்தை மீட்டெடு",
   ctxCopy:           "\u0ba8\u0b95\u0bb2\u0bcd \u0b8e\u0b9f\u0bc1",
 };
 
@@ -1210,6 +1344,13 @@ const VI: Translations = {
   compressApply:     "Nén và lưu thành…",
   compressFlattenDesc: "Xóa các trường tương tác",
   compressFlatten:     "Làm phẳng biểu mẫu",
+  ttPages:             "Quản lý trang",
+  pmTitle:             "Quản lý trang",
+  pmCancel:            "Hủy",
+  pmApply:             "Áp dụng",
+  pmDeletePage:        "Xóa trang",
+  pmRotatePage:        "Xoay trang",
+  pmRestorePage:       "Khôi phục trang",
   ctxCopy:           "Sao ch\u00e9p",
 };
 
@@ -1270,6 +1411,13 @@ const KO: Translations = {
   compressApply:     "압축하여 다른 이름으로 저장…",
   compressFlattenDesc: "대화형 필드 제거",
   compressFlatten:     "양식 평탄화",
+  ttPages:             "페이지 관리",
+  pmTitle:             "페이지 관리",
+  pmCancel:            "취소",
+  pmApply:             "적용",
+  pmDeletePage:        "페이지 삭제",
+  pmRotatePage:        "페이지 회전",
+  pmRestorePage:       "페이지 복원",
   ctxCopy:           "\ubcf5\uc0ac",
 };
 

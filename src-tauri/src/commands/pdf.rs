@@ -1,8 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use lopdf::Document;
+use serde::{Deserialize, Serialize};
 
 use crate::pdf::{models::Annotation, writer, writer::FormFieldValue};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PageOperation {
+    pub page: u32,
+    pub rotation: i64,
+    pub delete: bool,
+}
 
 /// Returns the total number of pages in the given PDF file.
 #[tauri::command]
@@ -115,4 +124,84 @@ pub fn strip_annotation_streams(
 pub fn read_annotations(file_path: String) -> Result<Vec<Annotation>, String> {
     let doc = Document::load(&file_path).map_err(|e| e.to_string())?;
     Ok(writer::load_meta(&doc).annotations)
+}
+
+/// Applies per-page rotation and deletion to a PDF.
+/// Annotation coordinates are in PDF content-stream space (the overlay uses
+/// viewport.convertToPdfPoint / convertToViewportPoint), so changing `/Rotate`
+/// does NOT require coordinate transforms — pdf.js repositions them automatically.
+/// Annotations on deleted pages are removed; remaining page numbers are adjusted.
+#[tauri::command]
+pub fn modify_pages(
+    input_path: String,
+    output_path: String,
+    operations: Vec<PageOperation>,
+) -> Result<(), String> {
+    let mut doc = Document::load(&input_path).map_err(|e| e.to_string())?;
+
+    let rotation_map: HashMap<u32, i64> = operations
+        .iter()
+        .filter(|op| !op.delete && op.rotation != 0)
+        .map(|op| (op.page, op.rotation))
+        .collect();
+
+    let delete_set: HashSet<u32> = operations
+        .iter()
+        .filter(|op| op.delete)
+        .map(|op| op.page)
+        .collect();
+
+    // Apply per-page rotation
+    let pages = doc.get_pages();
+    for (&page_num, &page_id) in &pages {
+        if let Some(&rot_delta) = rotation_map.get(&page_num) {
+            if let Ok(lopdf::Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
+                let current = dict
+                    .get(b"Rotate")
+                    .ok()
+                    .and_then(|o| o.as_i64().ok())
+                    .unwrap_or(0);
+                let new_rotate = (current + rot_delta).rem_euclid(360);
+                dict.set(b"Rotate", lopdf::Object::Integer(new_rotate));
+            }
+        }
+    }
+
+    // Delete pages
+    if !delete_set.is_empty() {
+        let mut to_delete: Vec<u32> = delete_set.iter().copied().collect();
+        to_delete.sort();
+        doc.delete_pages(&to_delete);
+    }
+
+    // Adjust annotation metadata
+    let mut meta = writer::load_meta(&doc);
+
+    if !delete_set.is_empty() {
+        let sorted_deleted: Vec<u32> = {
+            let mut v: Vec<u32> = delete_set.iter().copied().collect();
+            v.sort();
+            v
+        };
+
+        meta.annotations.retain(|ann| !delete_set.contains(&ann.page()));
+        for ann in &mut meta.annotations {
+            let old_page = ann.page();
+            let shift = sorted_deleted.iter().filter(|&&d| d < old_page).count() as u32;
+            ann.set_page(old_page - shift);
+        }
+
+        let old_ids = std::mem::take(&mut meta.stream_ids);
+        for (page_num, ids) in old_ids {
+            if delete_set.contains(&page_num) {
+                continue;
+            }
+            let shift = sorted_deleted.iter().filter(|&&d| d < page_num).count() as u32;
+            meta.stream_ids.insert(page_num - shift, ids);
+        }
+    }
+
+    writer::save_meta(&mut doc, &meta)?;
+    doc.save(&output_path).map_err(|e| e.to_string())?;
+    Ok(())
 }

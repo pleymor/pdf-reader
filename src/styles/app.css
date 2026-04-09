@@ -465,6 +465,99 @@ input[type="color"].color-picker {
   color: #888;
 }
 
+/* ── Page Manager ───────────────────────────────────────────────────────── */
+
+.page-manager-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #1e1e1e;
+  padding: 16px;
+}
+
+.page-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #444;
+  flex-shrink: 0;
+}
+
+.page-manager-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 16px 0;
+  align-content: flex-start;
+  justify-content: center;
+}
+
+.page-manager-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid #444;
+  flex-shrink: 0;
+}
+
+.page-thumbnail-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #2d2d2d;
+  transition: opacity 0.2s;
+}
+
+.page-thumbnail-card.deleted {
+  opacity: 0.3;
+}
+
+.page-thumbnail-canvas-wrapper {
+  position: relative;
+  line-height: 0;
+  transition: transform 0.2s;
+}
+
+.page-thumbnail-canvas-wrapper canvas {
+  display: block;
+  border: 1px solid #555;
+}
+
+.page-thumbnail-card.deleted .page-thumbnail-canvas-wrapper::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #ff4444;
+  transform: translateY(-50%);
+}
+
+.page-thumbnail-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.page-thumbnail-controls .page-number {
+  font-size: 11px;
+  color: #aaa;
+  min-width: 24px;
+  text-align: center;
+}
+
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 
 .toast {

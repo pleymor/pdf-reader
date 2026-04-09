@@ -26,6 +26,7 @@ import {
   ICON_ALIGN_RIGHT,
   ICON_FIT_WIDTH,
   ICON_FIT_HEIGHT,
+  ICON_PAGES,
   ICON_SETTINGS,
 } from "./icons";
 
@@ -47,6 +48,7 @@ type ToolbarEvent =
   | { type: "style-change"; style: ActiveToolState }
   | { type: "layer-change"; dir: "front" | "back" }
   | { type: "signature" }
+  | { type: "pages" }
   | { type: "settings" };
 
 type EventHandler = (e: ToolbarEvent) => void;
@@ -276,7 +278,11 @@ export class Toolbar {
     this.reg(rotateBtn, undefined, "ttRotate");
     rotateBtn.addEventListener("click", () => this.emit({ type: "rotate" }));
 
-    d.append(zoomOut, this.zoomInput, zoomIn, this.fitWidthBtn, this.fitHeightBtn, rotateBtn, this.sep());
+    const pagesBtn = this.btn(ICON_PAGES, "Manage pages", "icon-btn");
+    this.reg(pagesBtn, undefined, "ttPages");
+    pagesBtn.addEventListener("click", () => this.emit({ type: "pages" }));
+
+    d.append(zoomOut, this.zoomInput, zoomIn, this.fitWidthBtn, this.fitHeightBtn, rotateBtn, pagesBtn, this.sep());
 
     // Annotation mode toggle
     this.modeBtn = this.btn("Annotate", "Annotation mode");

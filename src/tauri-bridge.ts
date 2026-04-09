@@ -105,6 +105,21 @@ export async function openUrl(url: string): Promise<void> {
   return invoke<void>("open_url", { url });
 }
 
+export interface PageOperation {
+  page: number;
+  rotation: number;
+  delete: boolean;
+}
+
+/** Applies per-page rotation and deletion to a PDF, then saves. */
+export async function modifyPages(
+  inputPath: string,
+  outputPath: string,
+  operations: PageOperation[],
+): Promise<void> {
+  return invoke<void>("modify_pages", { inputPath, outputPath, operations });
+}
+
 export interface CompressResult {
   originalBytes: number;
   compressedBytes: number;

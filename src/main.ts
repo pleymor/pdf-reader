@@ -3,6 +3,7 @@ import { Toolbar } from "./toolbar";
 import { CompressModal } from "./compress-modal";
 import { SignatureModal } from "./signature-modal";
 import { SettingsModal } from "./settings";
+import { PageManagerModal } from "./page-manager";
 import { getTranslations, applyTranslationsToDOM } from "./i18n";
 import { AnnotationStore } from "./annotation-store";
 import { AnnotationHistory } from "./annotation-history";
@@ -24,6 +25,7 @@ import {
   readAnnotations,
   getStartupArgs,
   printPages,
+  modifyPages,
 } from "./tauri-bridge";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { tempDir, basename } from "@tauri-apps/api/path";
@@ -67,9 +69,10 @@ const store  = new AnnotationStore();
 const toolState = defaultToolState();
 const toolbar   = new Toolbar();
 const history   = new AnnotationHistory();
-const compressModal  = new CompressModal();
-const sigModal       = new SignatureModal();
-const settingsModal  = new SettingsModal();
+const compressModal      = new CompressModal();
+const sigModal           = new SignatureModal();
+const settingsModal      = new SettingsModal();
+const pageManagerModal   = new PageManagerModal();
 
 async function applyFitMode(): Promise<void> {
   if (!viewer.isLoaded() || fitMode === "none") return;
@@ -165,12 +168,14 @@ document.getElementById("viewer-scroll")!.addEventListener("focused-page-changed
   const t = getTranslations(settingsModal.getSettings().language);
   toolbar.applyTranslations(t);
   compressModal.applyTranslations(t);
+  pageManagerModal.applyTranslations(t);
   applyTranslationsToDOM(t);
 }
 settingsModal.onChange(s => {
   const t = getTranslations(s.language);
   toolbar.applyTranslations(t);
   compressModal.applyTranslations(t);
+  pageManagerModal.applyTranslations(t);
   applyTranslationsToDOM(t);
 });
 
@@ -371,6 +376,34 @@ compressModal.onConfirm(async (level) => {
   }
 });
 
+// ── Page manager handler ─────────────────────────────────────────────────────
+
+pageManagerModal.onConfirm(async (operations) => {
+  if (!filePath) return;
+  const hasChanges = operations.some(op => op.delete || op.rotation !== 0);
+  if (!hasChanges) return;
+  try {
+    const originalPath = filePath;
+    const tmp  = await tempDir();
+    const base = await basename(filePath);
+    const tmpPath = `${tmp}pdf-rider-pages-${base}`;
+
+    // Persist current state to a TEMP file (not the original)
+    const fv: FormFieldValue[] = [...formValues.entries()].map(([name, value]) => ({ name, value }));
+    await saveAnnotatedPdf(displayFilePath ?? filePath, tmpPath, store.getAll(), viewer.rotation, fv);
+    // Apply page modifications on the temp file
+    await modifyPages(tmpPath, tmpPath, operations);
+    // Reload from the modified temp
+    await loadPdf(tmpPath);
+    // Restore original path so Save writes to the real file
+    filePath = originalPath;
+    setDirty(true);
+    showToast("Pages updated.");
+  } catch (err) {
+    showToast(`Page modification failed: ${err}`, true);
+  }
+});
+
 // ── Toolbar events ────────────────────────────────────────────────────────────
 
 toolbar.on(async (e) => {
@@ -395,6 +428,12 @@ toolbar.on(async (e) => {
       if (viewer.isLoaded()) {
         await viewer.rotate();
         setDirty(true);
+      }
+      break;
+
+    case "pages":
+      if (viewer.isLoaded() && viewer.document) {
+        pageManagerModal.open(viewer.document, viewer.pageCount);
       }
       break;
 

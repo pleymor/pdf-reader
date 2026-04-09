@@ -43,6 +43,7 @@ pub fn run() {
             commands::pdf::save_annotated_pdf,
             commands::pdf::strip_annotation_streams,
             commands::pdf::read_annotations,
+            commands::pdf::modify_pages,
             commands::shell::print_pages,
             commands::shell::get_startup_args,
             commands::shell::check_pdf_association,

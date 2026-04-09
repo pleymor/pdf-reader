@@ -92,4 +92,13 @@ impl Annotation {
             Annotation::Signature(a) => a.page,
         }
     }
+
+    pub fn set_page(&mut self, p: u32) {
+        match self {
+            Annotation::Rect(a) => a.page = p,
+            Annotation::Circle(a) => a.page = p,
+            Annotation::Text(a) => a.page = p,
+            Annotation::Signature(a) => a.page = p,
+        }
+    }
 }
