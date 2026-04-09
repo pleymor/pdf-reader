@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(cargo check:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(grep -o id=\"\"method.[^\"\"]* C:/Users/pleym/Projects/pdf-rider/target/doc/pdfium_render/pdf/document/page/annotation/widget/struct.PdfPageWidgetAnnotation.html)"
     ]
   }
 }
