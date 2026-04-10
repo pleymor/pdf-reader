@@ -46,6 +46,7 @@ export class CanvasOverlay {
 
   private style: ActiveToolState;
   private activeTool: ToolKind = "select";
+  private editingAnn: Annotation | null = null;
 
   // ── Draw state ──────────────────────────────────────────────────────────────
   private isDrawing = false;
@@ -398,6 +399,7 @@ export class CanvasOverlay {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx.clearRect(0, 0, this.canvas.width / dpr, this.canvas.height / dpr);
     for (const ann of this.committed) {
+      if (ann === this.editingAnn) continue;
       this.drawAnnotation(ann);
     }
     if (this.selected && this.committed.includes(this.selected)) {
@@ -434,7 +436,7 @@ export class CanvasOverlay {
   private textLineCount(ann: TextAnnotation): number {
     const { scale } = this;
     const saved = this.ctx.font;
-    this.ctx.font = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "normal"} ${ann.fontSize * scale}px Helvetica, Arial, sans-serif`;
+    this.ctx.font = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "300"} ${ann.fontSize * scale}px Segoe UI, Helvetica, Arial, sans-serif`;
     const count = this.wrapLines(this.ctx, ann.content, ann.width * scale).length;
     this.ctx.font = saved;
     return count;
@@ -490,7 +492,7 @@ export class CanvasOverlay {
       ctx.translate(x, y);
       if (rotRad !== 0) ctx.rotate(rotRad);
       ctx.fillStyle = rgbToCss(ann.color);
-      ctx.font      = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "normal"} ${ann.fontSize * scale}px Helvetica, Arial, sans-serif`;
+      ctx.font      = `${ann.italic ? "italic" : "normal"} ${ann.bold ? "bold" : "300"} ${ann.fontSize * scale}px Segoe UI, Helvetica, Arial, sans-serif`;
       ctx.textAlign = ann.alignment as CanvasTextAlign;
       const lineH   = ann.fontSize * scale * 1.2;
       const maxW    = ann.width * scale;
@@ -805,8 +807,8 @@ export class CanvasOverlay {
       position: absolute;
       left: ${left}px; top: ${top}px;
       ${hasWidth ? `width: ${widthPx}px;` : "min-width: 120px;"}
-      font-size: ${fontSize}px; line-height: 1.2; font-family: Helvetica, Arial, sans-serif;
-      font-weight: ${this.style.bold ? "bold" : "normal"};
+      font-size: ${fontSize}px; line-height: 1.2; font-family: Segoe UI, Helvetica, Arial, sans-serif;
+      font-weight: ${this.style.bold ? "bold" : "300"};
       font-style: ${this.style.italic ? "italic" : "normal"};
       text-decoration: ${this.style.underline ? "underline" : "none"};
       text-align: ${this.style.alignment};
@@ -815,11 +817,23 @@ export class CanvasOverlay {
       padding: 2px 4px; white-space: pre-wrap; z-index: 20;
     `;
 
+    const cleanup = (): void => {
+      const scrollEl = document.getElementById("viewer-scroll");
+      const savedScroll = scrollEl?.scrollTop ?? 0;
+      const lock = () => { scrollEl!.scrollTop = savedScroll; };
+      if (scrollEl) scrollEl.addEventListener("scroll", lock);
+      input.remove();
+      document.removeEventListener("mousedown", outsideClick, true);
+      if (scrollEl) {
+        scrollEl.scrollTop = savedScroll;
+        setTimeout(() => { scrollEl.removeEventListener("scroll", lock); scrollEl.scrollTop = savedScroll; }, 300);
+      }
+    };
+
     const commit = (): void => {
       if (!input.isConnected) return;
       const content = (input.innerText ?? input.textContent ?? "").trim();
-      input.remove();
-      document.removeEventListener("mousedown", outsideClick, true);
+      cleanup();
       if (content) {
         // baseline = top of box + top padding (2px) + font size
         const baselineCanvasY = top + 2 + fontSize;
@@ -848,11 +862,7 @@ export class CanvasOverlay {
     };
 
     input.addEventListener("keydown", (ev: KeyboardEvent) => {
-      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); commit(); }
-      else if (ev.key === "Escape") {
-        input.remove();
-        document.removeEventListener("mousedown", outsideClick, true);
-      }
+      if (ev.key === "Escape") { cleanup(); }
     });
 
     container.appendChild(input);
@@ -898,14 +908,9 @@ export class CanvasOverlay {
     const boxW   = ann.width * scale;
 
     // Hide the canvas rendering while the edit div is visible
-    const idx = this.committed.indexOf(ann);
-    if (idx !== -1) this.committed.splice(idx, 1);
+    this.editingAnn = ann;
     this.selected = null;
     this.redrawCommitted();
-
-    const restore = (): void => {
-      if (idx !== -1) this.committed.splice(idx, 0, ann);
-    };
 
     const input = document.createElement("div");
     input.contentEditable = "true";
@@ -914,8 +919,8 @@ export class CanvasOverlay {
       position: absolute;
       left: ${canvasX}px; top: ${boxTop}px;
       width: ${boxW}px;
-      font-size: ${ann.fontSize * scale}px; line-height: 1.2; font-family: Helvetica, Arial, sans-serif;
-      font-weight: ${ann.bold ? "bold" : "normal"};
+      font-size: ${ann.fontSize * scale}px; line-height: 1.2; font-family: Segoe UI, Helvetica, Arial, sans-serif;
+      font-weight: ${ann.bold ? "bold" : "300"};
       font-style: ${ann.italic ? "italic" : "normal"};
       text-decoration: ${ann.underline ? "underline" : "none"};
       text-align: ${ann.alignment};
@@ -923,12 +928,23 @@ export class CanvasOverlay {
       outline: 1px dashed #aaa; background: transparent;
       padding: 2px 4px; white-space: pre-wrap; z-index: 10;
     `;
+    const finish = (): void => {
+      this.editingAnn = null;
+      const scrollEl = document.getElementById("viewer-scroll");
+      const savedScroll = scrollEl?.scrollTop ?? 0;
+      const lock = () => { scrollEl!.scrollTop = savedScroll; };
+      if (scrollEl) scrollEl.addEventListener("scroll", lock);
+      input.remove();
+      document.removeEventListener("mousedown", outsideClick, true);
+      if (scrollEl) {
+        scrollEl.scrollTop = savedScroll;
+        setTimeout(() => { scrollEl.removeEventListener("scroll", lock); scrollEl.scrollTop = savedScroll; }, 300);
+      }
+    };
     const commit = (): void => {
       if (!input.isConnected) return;
       const content = (input.innerText ?? input.textContent ?? "").trim();
-      input.remove();
-      document.removeEventListener("mousedown", outsideClick, true);
-      restore();
+      finish();
       if (content && content !== ann.content) {
         this.emitBeforeModify();
         ann.content = content;
@@ -940,11 +956,8 @@ export class CanvasOverlay {
       if (!input.contains(ev.target as Node)) commit();
     };
     input.addEventListener("keydown", (ev: KeyboardEvent) => {
-      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); commit(); }
-      else if (ev.key === "Escape") {
-        input.remove();
-        document.removeEventListener("mousedown", outsideClick, true);
-        restore();
+      if (ev.key === "Escape") {
+        finish();
         this.redrawCommitted();
       }
     });

@@ -776,18 +776,28 @@ export class PdfViewer {
       const newCols        = calculateColumnCount(containerWidth, refW, PAGE_GAP);
 
       if (newCols === this.columnCount) {
+        const savedScroll = this.scrollEl.scrollTop;
+        let anySizeChanged = false;
         for (const view of this.pageViews) {
           const dim = this.pageDimensions[view.pageNum - 1];
-          if (dim) view.setPlaceholderSize(
-            (swapped ? dim.height : dim.width) * this._scale,
-            (swapped ? dim.width  : dim.height) * this._scale
-          );
+          if (dim) {
+            const newW = Math.round((swapped ? dim.height : dim.width) * this._scale);
+            const newH = Math.round((swapped ? dim.width  : dim.height) * this._scale);
+            if (newW !== (parseInt(view.wrapper.style.width) || 0) ||
+                newH !== (parseInt(view.wrapper.style.height) || 0)) anySizeChanged = true;
+            view.setPlaceholderSize(newW, newH);
+          }
           view.rendered = false;
         }
         this.onLayoutChangedCb?.(this.pageViews);
-        // Scroll first so getBoundingClientRect() below reflects the final
-        // scroll position — pages visible *after* the scroll get renders too.
-        this.goToPage(savedPage, "instant");
+        // Only scroll to the page when sizes actually changed (zoom/rotate).
+        // When only the container height changed (e.g. toolbar toggle), preserve
+        // the exact scroll position to avoid a jarring jump.
+        if (anySizeChanged) {
+          this.goToPage(savedPage, "instant");
+        } else {
+          this.scrollEl.scrollTop = savedScroll;
+        }
         const scrollRect = this.scrollEl.getBoundingClientRect();
         for (const view of this.pageViews) {
           const r = view.wrapper.getBoundingClientRect();
