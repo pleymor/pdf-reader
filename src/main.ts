@@ -151,9 +151,13 @@ function wirePageOverlay(pv: PdfPageView): void {
   });
 }
 
+const wiredOverlays = new WeakSet<object>();
 viewer.onLayoutChanged((pageViews) => {
   for (const pv of pageViews) {
-    wirePageOverlay(pv);
+    if (!wiredOverlays.has(pv.overlay)) {
+      wirePageOverlay(pv);
+      wiredOverlays.add(pv.overlay);
+    }
     pv.overlay.setTool(toolState.tool);
     pv.overlay.setStyle(toolState);
   }

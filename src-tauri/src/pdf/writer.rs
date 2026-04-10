@@ -1090,4 +1090,163 @@ mod tests {
             other => panic!("expected String for text /V, got {:?}", other),
         }
     }
+
+    /// Full save → load → strip cycle: annotation must be readable from meta
+    /// and its burned content stream must be clearable by stream_id.
+    #[test]
+    fn test_save_strip_roundtrip() {
+        use lopdf::dictionary;
+
+        // 1. Build a one-page PDF
+        let (mut doc, _cat_id) = make_doc_with_catalog();
+        let content_stream = Stream::new(dictionary! {}, b"q Q".to_vec());
+        let cs_id = doc.add_object(Object::Stream(content_stream));
+        let page_id = doc.add_object(dictionary! {
+            b"Type" => Object::Name(b"Page".to_vec()),
+            b"Contents" => Object::Reference(cs_id),
+            b"Resources" => Object::Dictionary(lopdf::Dictionary::new()),
+        });
+
+        // Register the page in the Pages tree
+        let pages_id = {
+            let cat = doc.get_object(catalog_id(&doc).unwrap()).unwrap().as_dict().unwrap();
+            cat.get(b"Pages").unwrap().as_reference().unwrap()
+        };
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(pages_id) {
+            d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+            d.set("Count", Object::Integer(1));
+        }
+
+        // 2. Burn a text annotation
+        let ann = Annotation::Text(TextAnnotation {
+            page: 1,
+            x: 50.0, y: 300.0,
+            width: 200.0,
+            content: "Hello".to_string(),
+            color: black(),
+            font_size: 12.0,
+            bold: false, italic: false, underline: false,
+            alignment: TextAlignment::Left,
+        });
+
+        let mut meta = load_meta(&doc);
+        let existing = meta.stream_ids.get(&1).map(|arr| (arr[0], arr[1] as u16));
+        let sid = write_annotations_for_page(&mut doc, page_id, &[ann.clone()], existing)
+            .unwrap()
+            .expect("should return a stream id");
+
+        meta.annotations = vec![ann];
+        meta.stream_ids.insert(1, [sid.0, sid.1 as u32]);
+        save_meta(&mut doc, &meta).unwrap();
+
+        // 3. Save to a temp file, reload
+        let tmp = std::env::temp_dir().join("test_roundtrip.pdf");
+        doc.save(&tmp).unwrap();
+        let doc2 = Document::load(&tmp).unwrap();
+
+        // 4. Verify meta is readable
+        let meta2 = load_meta(&doc2);
+        assert_eq!(meta2.annotations.len(), 1, "should read back 1 annotation");
+        assert!(meta2.stream_ids.contains_key(&1), "should have stream id for page 1");
+
+        // 5. Verify the annotation stream has content
+        let sid2 = meta2.stream_ids.get(&1).unwrap();
+        let stream_obj = doc2.get_object((sid2[0], sid2[1] as u16)).unwrap();
+        let stream = stream_obj.as_stream().unwrap();
+        assert!(!stream.content.is_empty(), "annotation stream should have content before strip");
+
+        // 6. Strip and verify stream is empty
+        let mut doc3 = Document::load(&tmp).unwrap();
+        let meta3 = load_meta(&doc3);
+        clear_annotation_streams(&mut doc3, &meta3).unwrap();
+        let stream_obj3 = doc3.get_object((sid2[0], sid2[1] as u16)).unwrap();
+        let stream3 = stream_obj3.as_stream().unwrap();
+        assert!(stream3.content.is_empty(), "annotation stream should be empty after strip");
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// Simulate: save with annotation → save again from same file (no strip).
+    /// The annotation stream should be updated in-place, not duplicated.
+    #[test]
+    fn test_double_save_no_duplicate_streams() {
+        use lopdf::dictionary;
+
+        // 1. Build a one-page PDF
+        let (mut doc, _cat_id) = make_doc_with_catalog();
+        let content_stream = Stream::new(dictionary! {}, b"q Q".to_vec());
+        let cs_id = doc.add_object(Object::Stream(content_stream));
+        let page_id = doc.add_object(dictionary! {
+            b"Type" => Object::Name(b"Page".to_vec()),
+            b"Contents" => Object::Reference(cs_id),
+            b"Resources" => Object::Dictionary(lopdf::Dictionary::new()),
+        });
+        let pages_id = {
+            let cat = doc.get_object(catalog_id(&doc).unwrap()).unwrap().as_dict().unwrap();
+            cat.get(b"Pages").unwrap().as_reference().unwrap()
+        };
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(pages_id) {
+            d.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+            d.set("Count", Object::Integer(1));
+        }
+
+        let ann = Annotation::Text(TextAnnotation {
+            page: 1, x: 50.0, y: 300.0, width: 200.0,
+            content: "Hello".to_string(), color: black(), font_size: 12.0,
+            bold: false, italic: false, underline: false, alignment: TextAlignment::Left,
+        });
+
+        // 2. First save (no existing meta)
+        let mut meta = load_meta(&doc);
+        let existing = meta.stream_ids.get(&1).map(|arr| (arr[0], arr[1] as u16));
+        let sid = write_annotations_for_page(&mut doc, page_id, &[ann.clone()], existing)
+            .unwrap().unwrap();
+        meta.annotations = vec![ann.clone()];
+        meta.stream_ids.insert(1, [sid.0, sid.1 as u32]);
+        save_meta(&mut doc, &meta).unwrap();
+
+        let tmp = std::env::temp_dir().join("test_double_save.pdf");
+        doc.save(&tmp).unwrap();
+
+        // 3. Second save from the same file (simulates Ctrl+S without reopen)
+        let mut doc2 = Document::load(&tmp).unwrap();
+        let meta2 = load_meta(&doc2);
+        let pages2 = doc2.get_pages();
+        let page_id2 = *pages2.get(&1).unwrap();
+        let existing2 = meta2.stream_ids.get(&1).map(|arr| (arr[0], arr[1] as u16));
+        let sid2 = write_annotations_for_page(&mut doc2, page_id2, &[ann.clone()], existing2)
+            .unwrap().unwrap();
+        let mut new_meta = AnnotationMeta {
+            annotations: vec![ann],
+            stream_ids: HashMap::from([(1, [sid2.0, sid2.1 as u32])]),
+        };
+        save_meta(&mut doc2, &new_meta).unwrap();
+        doc2.save(&tmp).unwrap();
+
+        // 4. Verify: Contents should have exactly 2 entries (original + annotation)
+        let doc3 = Document::load(&tmp).unwrap();
+        let pages3 = doc3.get_pages();
+        let page_id3 = *pages3.get(&1).unwrap();
+        let page_dict = doc3.get_object(page_id3).unwrap().as_dict().unwrap();
+        let contents = page_dict.get(b"Contents").unwrap();
+        match contents {
+            Object::Array(arr) => {
+                assert_eq!(arr.len(), 2,
+                    "Contents should have exactly 2 entries (original + annotation), got {}",
+                    arr.len());
+            }
+            _ => panic!("Contents should be an array after append"),
+        }
+
+        // 5. Strip and verify annotation stream is empty
+        let mut doc4 = Document::load(&tmp).unwrap();
+        let meta4 = load_meta(&doc4);
+        assert_eq!(meta4.annotations.len(), 1);
+        clear_annotation_streams(&mut doc4, &meta4).unwrap();
+        let sid4 = meta4.stream_ids.get(&1).unwrap();
+        let s = doc4.get_object((sid4[0], sid4[1] as u16)).unwrap().as_stream().unwrap();
+        assert!(s.content.is_empty(), "annotation stream should be empty after strip");
+
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
